@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Face Off</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<div id="app">
+
+  <!-- LANDING -->
+  <section id="screen-landing" class="screen">
+    <h1>Face&nbsp;Off<span class="suit-deco">&#9827;</span></h1>
+    <p class="tagline">A 2-player card duel. Lowest hand wins the face off.</p>
+
+    <div class="panel">
+      <label>Your name
+        <input id="name-input" type="text" maxlength="20" placeholder="Player" />
+      </label>
+
+      <div class="landing-actions">
+        <button id="btn-create" class="primary">Create Room</button>
+        <div class="divider">or</div>
+        <label>Room code
+          <input id="join-code-input" type="text" maxlength="4" placeholder="ABCD" autocapitalize="characters" />
+        </label>
+        <button id="btn-join">Join Room</button>
+      </div>
+      <p id="landing-error" class="error"></p>
+    </div>
+  </section>
+
+  <!-- WAITING -->
+  <section id="screen-waiting" class="screen hidden">
+    <h2>Waiting for your friend&hellip;</h2>
+    <p>Share this room code:</p>
+    <div id="room-code-display" class="room-code"></div>
+    <p class="hint">They enter this code on the Face Off home screen to join.</p>
+  </section>
+
+  <!-- GAME -->
+  <section id="screen-game" class="screen hidden">
+
+    <header class="game-header">
+      <div class="score-box">
+        <div class="score-name" id="opp-name">Opponent</div>
+        <div class="score-value" id="opp-score">0</div>
+      </div>
+      <div class="match-target">first to <span id="match-target-val">100</span> loses</div>
+      <div class="score-box">
+        <div class="score-name" id="my-name">You</div>
+        <div class="score-value" id="my-score">0</div>
+      </div>
+    </header>
+
+    <div class="opponent-row">
+      <div class="opp-cards" id="opp-card-backs"></div>
+      <div class="turn-indicator" id="turn-indicator"></div>
+    </div>
+
+    <div class="table-row">
+      <div class="pile-block">
+        <div class="pile-label">Draw pile (<span id="draw-count">0</span>)</div>
+        <div id="draw-pile" class="card card-back" title="Draw a card"></div>
+      </div>
+      <div class="pile-block">
+        <div class="pile-label">Discard &mdash; take one card</div>
+        <div id="discard-pile" class="discard-group"></div>
+      </div>
+    </div>
+
+    <div class="action-row">
+      <button id="btn-discard" class="primary" disabled>Discard Selected</button>
+      <button id="btn-faceoff" class="danger" disabled>Call Face&nbsp;Off</button>
+      <div id="my-total" class="my-total"></div>
+    </div>
+
+    <div class="hand-row" id="my-hand"></div>
+
+    <div class="log-panel">
+      <div class="log-title">Activity</div>
+      <div id="log-list" class="log-list"></div>
+    </div>
+  </section>
+
+  <!-- HAND OVER OVERLAY -->
+  <div id="overlay-handover" class="overlay hidden">
+    <div class="overlay-box">
+      <h2 id="handover-title">Face Off!</h2>
+      <div id="handover-detail" class="overlay-detail"></div>
+      <button id="btn-next-hand" class="primary">Next Hand</button>
+    </div>
+  </div>
+
+  <!-- MATCH OVER OVERLAY -->
+  <div id="overlay-matchover" class="overlay hidden">
+    <div class="overlay-box">
+      <h2 id="matchover-title">Match Over</h2>
+      <div id="matchover-detail" class="overlay-detail"></div>
+      <button id="btn-new-match" class="primary">New Match</button>
+    </div>
+  </div>
+
+  <p id="game-error" class="error toast hidden"></p>
+</div>
+
+<script src="client.js"></script>
+</body>
+</html>
