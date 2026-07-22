@@ -4,6 +4,7 @@
   const RED_SUITS = new Set(['H', 'D']);
   const RANK_ORDER = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K'];
   const POLL_MS = 1500;
+  const RECONNECT_FLASH_MS = 2000;
 
   const state = {
     code: null,
@@ -14,6 +15,8 @@
     lastPhase: null,
     lastResultShown: null,
     autoSort: false,
+    oppWasConnected: undefined, // undefined until we've seen a real reading
+    reconnectFlashTimer: null,
   };
 
   function sortKey(card) {
@@ -138,6 +141,41 @@
     return parseInt(card.rank, 10);
   }
 
+  // ---------- connection status (opponent going offline / coming back) ----------
+  function updateOpponentConnection(opp) {
+    const box = $('opp-score-box');
+    if (!box) return;
+
+    if (!opp) {
+      // No opponent yet (still waiting for them to join) - nothing to show.
+      box.classList.remove('disconnected', 'reconnecting');
+      state.oppWasConnected = undefined;
+      return;
+    }
+
+    const connected = opp.connected !== false;
+    const wasConnected = state.oppWasConnected;
+
+    if (wasConnected === false && connected === true) {
+      // Reconnected: gently flash green for a couple seconds, then settle.
+      box.classList.remove('disconnected');
+      box.classList.remove('reconnecting');
+      void box.offsetWidth; // restart the animation if it's already mid-flash
+      box.classList.add('reconnecting');
+      clearTimeout(state.reconnectFlashTimer);
+      state.reconnectFlashTimer = setTimeout(() => {
+        box.classList.remove('reconnecting');
+      }, RECONNECT_FLASH_MS);
+    } else if (!connected) {
+      box.classList.remove('reconnecting');
+      box.classList.add('disconnected');
+    } else if (!box.classList.contains('reconnecting')) {
+      box.classList.remove('disconnected');
+    }
+
+    state.oppWasConnected = connected;
+  }
+
   // ---------- render ----------
   let currentState = null;
 
@@ -151,6 +189,7 @@
     $('my-score').textContent = view.scores[view.you] || 0;
     $('opp-score').textContent = opp ? view.scores[opp.id] || 0 : 0;
     $('match-target-val').textContent = view.matchTarget;
+    updateOpponentConnection(opp);
 
     if (view.phase === 'waiting') {
       $('room-code-display').textContent = view.code;
