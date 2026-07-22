@@ -1,0 +1,16 @@
+{
+  "name": "faceoff",
+  "version": "1.0.0",
+  "description": "Face Off - a 2-player online card game (custom rummy-style, no dependencies)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": ["card-game", "multiplayer"],
+  "author": "",
+  "license": "ISC"
+}
