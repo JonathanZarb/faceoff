@@ -47,8 +47,9 @@ function dealNewHand(room) {
     drawPile,
     discardPile, // the currently-takeable group (starts as the flipped-up card)
     buried: [],
+    pendingDiscard: [], // this turn's discard, staged until the draw completes
     turnPlayerId: room.startingPlayerId,
-    turnPhase: 'await_draw',
+    turnPhase: 'await_discard',
     result: null,
   };
   room.phase = 'playing';
@@ -126,11 +127,45 @@ function reshuffleIfNeeded(room) {
   }
 }
 
+// Turn order: discard (or call Face Off) first, then draw. The discard is
+// staged in pendingDiscard so the player's own draw this turn still only
+// ever sees the pile their OPPONENT left behind - not the cards they just
+// discarded. The staged discard becomes the new accessible pile, and the
+// turn passes to the opponent, only once the draw completes.
+function doDiscard(room, player, { cardIds }) {
+  const hand = room.hand;
+  if (room.phase !== 'playing') return { error: 'No hand in progress.' };
+  if (hand.turnPlayerId !== player.id) return { error: 'Not your turn.' };
+  if (hand.turnPhase !== 'await_discard') return { error: 'You already discarded this turn - draw a card to finish it.' };
+  if (!Array.isArray(cardIds) || cardIds.length === 0) return { error: 'No cards selected.' };
+
+  const myHand = hand.hands[player.id];
+  const cards = [];
+  for (const id of cardIds) {
+    const c = myHand.find((card) => card.id === id);
+    if (!c) return { error: 'Selected card is not in your hand.' };
+    cards.push(c);
+  }
+  const uniqueIds = new Set(cardIds);
+  if (uniqueIds.size !== cardIds.length) return { error: 'Duplicate card in selection.' };
+
+  if (!gl.isValidMeld(cards)) {
+    return { error: 'Not a valid discard: must be a single card, a same-rank group, or a same-suit run.' };
+  }
+
+  hand.hands[player.id] = myHand.filter((c) => !uniqueIds.has(c.id));
+  hand.pendingDiscard = cards;
+  hand.turnPhase = 'await_draw';
+  room.lastActivity = Date.now();
+  log(room, `${player.name} discarded ${cards.length} card(s).`);
+  return { room };
+}
+
 function doDraw(room, player, { source, cardId }) {
   const hand = room.hand;
   if (room.phase !== 'playing') return { error: 'No hand in progress.' };
   if (hand.turnPlayerId !== player.id) return { error: 'Not your turn.' };
-  if (hand.turnPhase !== 'await_draw') return { error: 'You already drew this turn.' };
+  if (hand.turnPhase !== 'await_draw') return { error: 'Discard a card (or call Face Off) before drawing.' };
 
   const myHand = hand.hands[player.id];
   let drawnCard;
@@ -149,46 +184,21 @@ function doDraw(room, player, { source, cardId }) {
     return { error: 'Invalid draw source.' };
   }
 
-  // Whatever remains of the previous discard group is no longer accessible.
+  myHand.push(drawnCard);
+
+  // Turn is complete: whatever's left of the pile you drew from is no longer
+  // accessible, and the cards you discarded this turn become the new pile -
+  // available to your opponent, not to you.
   if (hand.discardPile.length > 0) {
     hand.buried.push(...hand.discardPile);
-    hand.discardPile = [];
   }
+  hand.discardPile = hand.pendingDiscard;
+  hand.pendingDiscard = [];
 
-  myHand.push(drawnCard);
+  hand.turnPlayerId = opponentOf(room, player.id).id;
   hand.turnPhase = 'await_discard';
   room.lastActivity = Date.now();
   log(room, `${player.name} drew from the ${source}.`);
-  return { room };
-}
-
-function doDiscard(room, player, { cardIds }) {
-  const hand = room.hand;
-  if (room.phase !== 'playing') return { error: 'No hand in progress.' };
-  if (hand.turnPlayerId !== player.id) return { error: 'Not your turn.' };
-  if (hand.turnPhase !== 'await_discard') return { error: 'Draw a card before discarding.' };
-  if (!Array.isArray(cardIds) || cardIds.length === 0) return { error: 'No cards selected.' };
-
-  const myHand = hand.hands[player.id];
-  const cards = [];
-  for (const id of cardIds) {
-    const c = myHand.find((card) => card.id === id);
-    if (!c) return { error: 'Selected card is not in your hand.' };
-    cards.push(c);
-  }
-  const uniqueIds = new Set(cardIds);
-  if (uniqueIds.size !== cardIds.length) return { error: 'Duplicate card in selection.' };
-
-  if (!gl.isValidMeld(cards)) {
-    return { error: 'Not a valid discard: must be a single card, a same-rank group, or a same-suit run.' };
-  }
-
-  hand.hands[player.id] = myHand.filter((c) => !uniqueIds.has(c.id));
-  hand.discardPile = cards;
-  hand.turnPlayerId = opponentOf(room, player.id).id;
-  hand.turnPhase = 'await_draw';
-  room.lastActivity = Date.now();
-  log(room, `${player.name} discarded ${cards.length} card(s).`);
   return { room };
 }
 
@@ -196,7 +206,7 @@ function doCallFaceOff(room, player) {
   const hand = room.hand;
   if (room.phase !== 'playing') return { error: 'No hand in progress.' };
   if (hand.turnPlayerId !== player.id) return { error: 'Not your turn.' };
-  if (hand.turnPhase !== 'await_draw') return { error: 'You can only call Face Off at the start of your turn.' };
+  if (hand.turnPhase !== 'await_discard') return { error: 'You can only call Face Off at the start of your turn.' };
 
   const myHand = hand.hands[player.id];
   if (!gl.canCallFaceOff(myHand)) {
@@ -295,7 +305,7 @@ function viewFor(room, playerId) {
     hand: {
       myHand,
       myTotal: gl.handTotal(myHand),
-      canCallFaceOff: h.turnPlayerId === playerId && h.turnPhase === 'await_draw' && gl.canCallFaceOff(myHand),
+      canCallFaceOff: h.turnPlayerId === playerId && h.turnPhase === 'await_discard' && gl.canCallFaceOff(myHand),
       opponentCardCount: oppHand.length,
       discardPile: h.discardPile,
       drawPileCount: h.drawPile.length,
