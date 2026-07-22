@@ -2,6 +2,7 @@
 (function () {
   const SUIT_SYMBOL = { H: '♥', D: '♦', C: '♣', S: '♠' };
   const RED_SUITS = new Set(['H', 'D']);
+  const RANK_ORDER = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K'];
   const POLL_MS = 1500;
 
   const state = {
@@ -12,7 +13,19 @@
     pollTimer: null,
     lastPhase: null,
     lastResultShown: null,
+    autoSort: false,
   };
+
+  function sortKey(card) {
+    if (card.rank === 'JOKER') return 100; // Jokers always sort to the right
+    return RANK_ORDER.indexOf(card.rank);
+  }
+
+  function sortedHand(hand) {
+    return hand
+      .slice()
+      .sort((a, b) => sortKey(a) - sortKey(b) || (a.suit || '').localeCompare(b.suit || ''));
+  }
 
   const $ = (id) => document.getElementById(id);
 
@@ -200,7 +213,8 @@
     const presentIds = new Set(hand.myHand.map((c) => c.id));
     for (const id of Array.from(state.selected)) if (!presentIds.has(id)) state.selected.delete(id);
 
-    hand.myHand.forEach((card) => {
+    const displayHand = state.autoSort ? sortedHand(hand.myHand) : hand.myHand;
+    displayHand.forEach((card) => {
       const selected = state.selected.has(card.id);
       const el = cardFaceEl(card, { clickable: canDiscard, selected });
       if (canDiscard) {
@@ -223,6 +237,13 @@
 
     $('btn-faceoff').disabled = !(view.phase === 'playing' && hand.canCallFaceOff);
     $('btn-faceoff').onclick = () => doAction(() => sendAction('callFaceOff'));
+
+    $('btn-sort').textContent = `Auto-arrange: ${state.autoSort ? 'On' : 'Off'}`;
+    $('btn-sort').classList.toggle('active', state.autoSort);
+    $('btn-sort').onclick = () => {
+      state.autoSort = !state.autoSort;
+      render(currentState);
+    };
 
     // log
     const logList = $('log-list');

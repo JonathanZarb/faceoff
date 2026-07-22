@@ -247,13 +247,41 @@ button:not(.primary):not(.danger):hover:not(:disabled) { background: rgba(255,25
 .my-total { font-size: 0.85rem; color: rgba(247,243,234,0.75); }
 .my-total b { color: var(--gold); font-size: 1rem; }
 
+.hand-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-top: 1px solid rgba(255,255,255,0.12);
+  padding-top: 14px;
+  margin-top: 4px;
+}
+.hand-header-label {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: rgba(247,243,234,0.65);
+}
+.sort-toggle {
+  background: rgba(255,255,255,0.1);
+  color: rgba(247,243,234,0.85);
+  border-radius: 20px;
+  padding: 5px 14px;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+.sort-toggle:hover { background: rgba(255,255,255,0.18); }
+.sort-toggle.active {
+  background: rgba(212,175,55,0.22);
+  color: var(--gold);
+  border: 1px solid var(--gold);
+}
+
 .hand-row {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
   justify-content: center;
   padding: 10px 0 20px;
-  border-top: 1px solid rgba(255,255,255,0.12);
 }
 
 .log-panel {
