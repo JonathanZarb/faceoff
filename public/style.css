@@ -1,6 +1,6 @@
 :root {
-  --felt: #0b5c3d;
-  --felt-dark: #084430;
+  --felt: #1a1a1a;
+  --felt-dark: #000000;
   --cream: #f7f3ea;
   --ink: #1c1c1c;
   --accent: #c0392b;
@@ -17,7 +17,7 @@
 body {
   margin: 0;
   min-height: 100vh;
-  background: radial-gradient(ellipse at top, #0e6b47, var(--felt-dark));
+  background: radial-gradient(ellipse at top, var(--felt), var(--felt-dark));
   color: var(--cream);
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
 }
