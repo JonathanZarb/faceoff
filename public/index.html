@@ -48,7 +48,11 @@
         <div class="score-name" id="opp-name">Opponent</div>
         <div class="score-value" id="opp-score">0</div>
       </div>
-      <div class="match-target">first to <span id="match-target-val">100</span> loses</div>
+      <div class="match-target">
+        <span class="mt-label">First to</span>
+        <span class="mt-num" id="match-target-val">100</span>
+        <span class="mt-label">loses</span>
+      </div>
       <div class="score-box">
         <div class="score-name" id="my-name">You</div>
         <div class="score-value" id="my-score">0</div>
@@ -62,11 +66,9 @@
 
     <div class="table-row">
       <div class="pile-block">
-        <div class="pile-label">Draw pile (<span id="draw-count">0</span>)</div>
         <div id="draw-pile" class="card card-back" title="Draw a card"></div>
       </div>
       <div class="pile-block">
-        <div class="pile-label">Discard &mdash; take one card</div>
         <div id="discard-pile" class="discard-group"></div>
       </div>
     </div>
@@ -84,10 +86,6 @@
       <div id="my-total" class="my-total"></div>
     </div>
 
-    <div class="log-panel">
-      <div class="log-title">Activity</div>
-      <div id="log-list" class="log-list"></div>
-    </div>
   </section>
 
   <!-- HAND OVER OVERLAY -->

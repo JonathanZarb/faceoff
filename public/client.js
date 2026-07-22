@@ -186,7 +186,6 @@
     }
 
     // draw pile
-    $('draw-count').textContent = hand.drawPileCount;
     const drawPileEl = $('draw-pile');
     const canDraw = view.phase === 'playing' && hand.isMyTurn && hand.turnPhase === 'await_draw';
     drawPileEl.classList.toggle('disabled', !canDraw);
@@ -244,18 +243,6 @@
       state.autoSort = !state.autoSort;
       render(currentState);
     };
-
-    // log
-    const logList = $('log-list');
-    logList.innerHTML = '';
-    view.log
-      .slice()
-      .reverse()
-      .forEach((entry) => {
-        const d = document.createElement('div');
-        d.textContent = entry.message;
-        logList.appendChild(d);
-      });
 
     // overlays
     if (view.phase === 'hand_over' && hand.result) {
