@@ -66,39 +66,55 @@ async function main() {
   const second = firstIsAlice ? 'bob' : 'alice';
   console.log('  first player:', first);
 
-  // First player's turn: draw from deck, then discard 1 card.
-  let r = await action(first, 'draw', { source: 'deck' });
+  // First player's turn: discard 1 card first, then draw to finish the turn.
+  s = await stateFor(first);
+  const initialHand = s.hand.myHand;
+  const discardCardId = initialHand[0].id;
+  let r = await action(first, 'discard', { cardIds: [discardCardId] });
+  assert.equal(r.state.hand.turnPhase, 'await_draw');
+  assert.equal(r.state.hand.turnPlayerId, players[first].id); // still first's turn - draw still owed
+  assert.equal(r.state.hand.myHand.length, 9);
+
+  // Trying to discard again before drawing should be rejected.
+  let threwDoubleDiscard = false;
+  try {
+    await action(first, 'discard', { cardIds: [r.state.hand.myHand[0].id] });
+  } catch (e) {
+    threwDoubleDiscard = true;
+    assert.match(e.message, /already discarded/);
+  }
+  assert.equal(threwDoubleDiscard, true, 'expected second discard before drawing to be rejected');
+
+  r = await action(first, 'draw', { source: 'deck' });
   assert.equal(r.state.hand.turnPhase, 'await_discard');
-  const myHandAfterDraw = r.state.hand.myHand;
-  assert.equal(myHandAfterDraw.length, 11);
-
-  const discardCardId = myHandAfterDraw[0].id;
-  r = await action(first, 'discard', { cardIds: [discardCardId] });
   assert.equal(r.state.hand.turnPlayerId, players[second].id);
-  console.log('  first player drew + discarded, turn passed to', second);
+  assert.equal(r.state.hand.myHand.length, 10);
+  console.log('  first player discarded + drew, turn passed to', second);
 
-  // Second player draws from the discard pile (the card first player just discarded).
+  // Second player's turn: the card first player discarded is now the accessible pile.
   let s2 = await stateFor(second);
   assert.equal(s2.hand.discardPile.length, 1);
-  const takeId = s2.hand.discardPile[0].id;
-  r = await action(second, 'draw', { source: 'discard', cardId: takeId });
-  assert.equal(r.state.hand.myHand.some((c) => c.id === takeId), true);
-  console.log('  second player took discard card successfully');
+  const leftBehindId = s2.hand.discardPile[0].id;
 
-  // Discard pile should now be empty (single-use group), buried internally.
-  assert.equal(r.state.hand.discardPile.length, 0);
-
-  // Second player discards a single card to pass turn back.
-  const secondDiscard = r.state.hand.myHand[0].id;
+  // Second player discards one of their own cards first...
+  const secondDiscard = s2.hand.myHand[0].id;
   r = await action(second, 'discard', { cardIds: [secondDiscard] });
+  assert.equal(r.state.hand.turnPhase, 'await_draw');
+  assert.equal(r.state.hand.turnPlayerId, players[second].id);
+
+  // ...then draws the card first player left behind to finish the turn.
+  r = await action(second, 'draw', { source: 'discard', cardId: leftBehindId });
+  assert.equal(r.state.hand.myHand.some((c) => c.id === leftBehindId), true);
   assert.equal(r.state.hand.turnPlayerId, players[first].id);
-  console.log('  second player discarded, turn back to', first);
+  console.log('  second player took discard card successfully, turn back to', first);
+
+  // The pile is now second player's just-discarded card, not the one they took.
+  assert.equal(r.state.hand.discardPile.length, 1);
+  assert.notEqual(r.state.hand.discardPile[0].id, leftBehindId);
 
   // --- Invalid meld rejection check ---
   s = await stateFor(first);
-  // draw first so we're in await_discard state, then try an invalid multi-discard
-  r = await action(first, 'draw', { source: 'deck' });
-  const hand = r.state.hand.myHand;
+  const hand = s.hand.myHand;
   // pick two cards guaranteed not to form a valid meld (different rank & suit) if possible
   let badPair = null;
   outer: for (let i = 0; i < hand.length; i++) {
@@ -123,8 +139,12 @@ async function main() {
     assert.equal(threw, true, 'expected invalid meld to be rejected');
     console.log('  invalid meld correctly rejected');
   }
-  // finish the turn legally with a single card so state stays consistent
+  // finish the turn legally with a single card, then draw to complete it
   r = await action(first, 'discard', { cardIds: [hand[0].id] });
+  assert.equal(r.state.hand.turnPhase, 'await_draw');
+  r = await action(first, 'draw', { source: 'deck' });
+  assert.equal(r.state.hand.turnPhase, 'await_discard');
+  assert.equal(r.state.hand.turnPlayerId, players[second].id);
 
   // --- Force a Face Off scenario by inspecting live state and only asserting
   //     invariants that must hold regardless of card luck ---
