@@ -221,3 +221,40 @@ test('viewFor hides opponent hand contents but exposes count', () => {
   assert.equal(view.hand.opponentCardCount, 10);
   assert.equal(JSON.stringify(view).includes('"opponentHand"'), false);
 });
+
+test('viewFor reports a freshly-joined player as connected', () => {
+  const { room, p1, p2 } = makeRoomWithHand();
+  const view = rooms.viewFor(room, p1);
+  const p1entry = view.players.find((p) => p.id === p1);
+  const p2entry = view.players.find((p) => p.id === p2);
+  assert.equal(p1entry.connected, true);
+  assert.equal(p2entry.connected, true);
+});
+
+test('viewFor marks a player disconnected once their lastSeen goes stale, and connected again once it is fresh', () => {
+  const { room, p1, p2 } = makeRoomWithHand();
+  const p2obj = room.players.find((p) => p.id === p2);
+
+  // Simulate p2 going quiet for longer than the disconnect threshold.
+  p2obj.lastSeen = Date.now() - 10000;
+  let view = rooms.viewFor(room, p1);
+  assert.equal(view.players.find((p) => p.id === p2).connected, false);
+  // p1 (still polling) should read as connected throughout.
+  assert.equal(view.players.find((p) => p.id === p1).connected, true);
+
+  // p2 "reconnects" - the next authenticated call (a state poll or action)
+  // refreshes lastSeen, same as authenticate() does for real requests.
+  p2obj.lastSeen = Date.now();
+  view = rooms.viewFor(room, p1);
+  assert.equal(view.players.find((p) => p.id === p2).connected, true);
+});
+
+test('authenticate() refreshes lastSeen, keeping an actively-polling player connected', () => {
+  const { room, p1 } = makeRoomWithHand();
+  const p1obj = room.players.find((p) => p.id === p1);
+  p1obj.lastSeen = Date.now() - 10000; // pretend they've been quiet
+
+  const result = rooms.authenticate(room.code, p1obj.id, p1obj.token);
+  assert.equal(result.error, undefined);
+  assert.ok(Date.now() - result.player.lastSeen < 100);
+});
