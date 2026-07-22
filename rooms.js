@@ -10,6 +10,11 @@ const HAND_SIZE = 10;
 const MATCH_TARGET = 100;
 const ASSAF_PENALTY = 20;
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no 0/O/1/I
+// A player is considered disconnected once this long has passed since their
+// last authenticated request (state poll or action). Comfortably more than
+// a couple of the client's poll intervals so brief network hiccups don't
+// falsely flag someone as gone.
+const DISCONNECT_MS = 5000;
 
 const rooms = new Map();
 
@@ -81,7 +86,7 @@ function createRoom(name) {
   };
   const id = crypto.randomUUID();
   const token = randomToken();
-  room.players.push({ id, token, name: name || 'Player 1', seat: 1 });
+  room.players.push({ id, token, name: name || 'Player 1', seat: 1, lastSeen: Date.now() });
   room.scores[id] = 0;
   rooms.set(code, room);
   log(room, `${room.players[0].name} created the room.`);
@@ -94,7 +99,7 @@ function joinRoom(code, name) {
   if (room.players.length >= 2) return { error: 'Room is full.' };
   const id = crypto.randomUUID();
   const token = randomToken();
-  room.players.push({ id, token, name: name || 'Player 2', seat: 2 });
+  room.players.push({ id, token, name: name || 'Player 2', seat: 2, lastSeen: Date.now() });
   room.scores[id] = 0;
   log(room, `${room.players[1].name} joined the room.`);
   room.lastActivity = Date.now();
@@ -111,6 +116,9 @@ function authenticate(code, playerId, token) {
   if (!room) return { error: 'Room not found.' };
   const player = room.players.find((p) => p.id === playerId && p.token === token);
   if (!player) return { error: 'Not authorized for this room.' };
+  // Every authenticated call (state poll or action) is proof of life -
+  // this is how we detect disconnects without a persistent connection.
+  player.lastSeen = Date.now();
   return { room, player };
 }
 
@@ -283,7 +291,12 @@ function viewFor(room, playerId) {
   const base = {
     code: room.code,
     phase: room.phase,
-    players: room.players.map((p) => ({ id: p.id, name: p.name, seat: p.seat })),
+    players: room.players.map((p) => ({
+      id: p.id,
+      name: p.name,
+      seat: p.seat,
+      connected: Date.now() - (p.lastSeen || 0) < DISCONNECT_MS,
+    })),
     you: playerId,
     scores: room.scores,
     matchTarget: room.matchTarget,
