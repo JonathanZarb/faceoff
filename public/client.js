@@ -175,7 +175,7 @@
     const ti = $('turn-indicator');
     if (view.phase === 'playing') {
       if (hand.isMyTurn) {
-        ti.textContent = hand.turnPhase === 'await_draw' ? 'Your turn — draw or call Face Off' : 'Your turn — discard';
+        ti.textContent = hand.turnPhase === 'await_discard' ? 'Your turn — discard or call Face Off' : 'Your turn — draw a card';
         ti.classList.remove('waiting');
       } else {
         ti.textContent = `Waiting for ${opp ? opp.name : 'opponent'}…`;
