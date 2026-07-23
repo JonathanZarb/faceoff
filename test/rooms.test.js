@@ -222,6 +222,32 @@ test('viewFor hides opponent hand contents but exposes count', () => {
   assert.equal(JSON.stringify(view).includes('"opponentHand"'), false);
 });
 
+test('viewFor reveals the opponent\'s actual hand once a Face Off has been called', () => {
+  const { room, p1, p2 } = makeRoomWithHand();
+  const p1obj = room.players.find((p) => p.id === p1);
+  room.hand.turnPlayerId = p1;
+  room.hand.turnPhase = 'await_discard';
+  room.hand.hands[p1] = [card('A', 'H'), card('2', 'S')]; // total 3
+  room.hand.hands[p2] = [card('K', 'H'), card('K', 'S')]; // total 20
+
+  rooms.doCallFaceOff(room, p1obj);
+
+  const view = rooms.viewFor(room, p1);
+  assert.ok(Array.isArray(view.hand.opponentHand));
+  assert.equal(view.hand.opponentHand.length, 2);
+  assert.deepEqual(
+    view.hand.opponentHand.map((c) => c.rank).sort(),
+    ['K', 'K']
+  );
+
+  // The opponent, in turn, sees the caller's real cards too.
+  const oppView = rooms.viewFor(room, p2);
+  assert.deepEqual(
+    oppView.hand.opponentHand.map((c) => c.rank).sort(),
+    ['2', 'A']
+  );
+});
+
 test('viewFor reports a freshly-joined player as connected', () => {
   const { room, p1, p2 } = makeRoomWithHand();
   const view = rooms.viewFor(room, p1);
