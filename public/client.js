@@ -189,6 +189,113 @@
     }
   }
 
+  // On some browsers the audio context can only truly wake up on a direct
+  // user gesture. This is a cheap safety net: if it's still suspended by the
+  // time the player next clicks anywhere, try again.
+  document.addEventListener(
+    'click',
+    () => {
+      if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
+    },
+    { passive: true }
+  );
+
+  // ---------- lobby "elevator music" (synthesized, no external asset) ----------
+  // A soft, looping smooth-jazz-ish I-vi-ii-V pad progression with a gentle
+  // plucked bass note under each chord. Plays only on the "waiting for your
+  // friend" screen.
+  const LOBBY_PROGRESSION = [
+    { pad: [130.81, 164.81, 196.0, 246.94], bass: 65.41 }, // Cmaj7 / C2
+    { pad: [110.0, 130.81, 164.81, 196.0], bass: 55.0 }, // Am7 / A1
+    { pad: [146.83, 174.61, 220.0, 261.63], bass: 73.42 }, // Dm7 / D2
+    { pad: [98.0, 123.47, 146.83, 174.61], bass: 49.0 }, // G7 / G1
+  ];
+  const LOBBY_CHORD_SECONDS = 3.2;
+
+  let musicMasterGain = null;
+  let musicPlaying = false;
+  let musicSchedulerTimer = null;
+  let musicNextChordTime = 0;
+  let musicChordStep = 0;
+
+  function playLobbyPadChord(ctx, freqs, startTime, duration) {
+    freqs.forEach((freq) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(freq, startTime);
+      gain.gain.setValueAtTime(0.0001, startTime);
+      gain.gain.exponentialRampToValueAtTime(0.05, startTime + 0.9); // slow, gentle attack
+      gain.gain.setValueAtTime(0.05, startTime + duration - 1.0);
+      gain.gain.exponentialRampToValueAtTime(0.0001, startTime + duration);
+      osc.connect(gain);
+      gain.connect(musicMasterGain);
+      osc.start(startTime);
+      osc.stop(startTime + duration + 0.05);
+    });
+  }
+
+  function playLobbyBassPluck(ctx, freq, startTime) {
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(freq, startTime);
+    gain.gain.setValueAtTime(0.0001, startTime);
+    gain.gain.exponentialRampToValueAtTime(0.1, startTime + 0.04);
+    gain.gain.exponentialRampToValueAtTime(0.0001, startTime + 1.1);
+    osc.connect(gain);
+    gain.connect(musicMasterGain);
+    osc.start(startTime);
+    osc.stop(startTime + 1.2);
+  }
+
+  function scheduleLobbyMusic() {
+    if (!musicPlaying) return;
+    const ctx = getAudioCtx();
+    if (!ctx) return;
+    // Keep scheduling a little over one chord ahead of real time.
+    while (musicNextChordTime < ctx.currentTime + LOBBY_CHORD_SECONDS * 1.5) {
+      const entry = LOBBY_PROGRESSION[musicChordStep % LOBBY_PROGRESSION.length];
+      playLobbyPadChord(ctx, entry.pad, musicNextChordTime, LOBBY_CHORD_SECONDS);
+      playLobbyBassPluck(ctx, entry.bass, musicNextChordTime);
+      musicChordStep += 1;
+      musicNextChordTime += LOBBY_CHORD_SECONDS;
+    }
+    musicSchedulerTimer = setTimeout(scheduleLobbyMusic, 1000);
+  }
+
+  function startLobbyMusic() {
+    if (musicPlaying) return;
+    const ctx = getAudioCtx();
+    if (!ctx) return;
+    if (ctx.state === 'suspended') ctx.resume().catch(() => {});
+    if (!musicMasterGain) {
+      musicMasterGain = ctx.createGain();
+      musicMasterGain.gain.value = 0.55;
+      musicMasterGain.connect(ctx.destination);
+    }
+    musicPlaying = true;
+    musicChordStep = 0;
+    musicNextChordTime = ctx.currentTime + 0.15;
+    scheduleLobbyMusic();
+  }
+
+  function stopLobbyMusic() {
+    if (!musicPlaying) return;
+    musicPlaying = false;
+    clearTimeout(musicSchedulerTimer);
+    const ctx = getAudioCtx();
+    if (ctx && musicMasterGain) {
+      const now = ctx.currentTime;
+      musicMasterGain.gain.cancelScheduledValues(now);
+      musicMasterGain.gain.setValueAtTime(musicMasterGain.gain.value, now);
+      musicMasterGain.gain.linearRampToValueAtTime(0.0001, now + 0.6);
+    }
+    // Drop the ramped-down node; a fresh one (at full volume) is created
+    // next time the lobby music starts.
+    musicMasterGain = null;
+  }
+
   // ---------- connection status (opponent going offline / coming back) ----------
   function updateOpponentConnection(opp) {
     const box = $('opp-score-box');
@@ -242,8 +349,10 @@
     if (view.phase === 'waiting') {
       $('room-code-display').textContent = view.code;
       showScreen('screen-waiting');
+      startLobbyMusic();
       return;
     }
+    stopLobbyMusic();
 
     showScreen('screen-game');
     const hand = view.hand;
