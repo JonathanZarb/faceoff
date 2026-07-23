@@ -326,6 +326,10 @@ function viewFor(room, playerId) {
       turnPhase: h.turnPhase,
       isMyTurn: h.turnPlayerId === playerId,
       result: h.result,
+      // Only revealed once a Face Off has actually been called this hand -
+      // secrecy holds until then, and the key itself is omitted (not just
+      // null) so it can't leak hand size or existence before the reveal.
+      ...(h.result ? { opponentHand: oppHand } : {}),
     },
   };
 }
