@@ -374,7 +374,132 @@ button:not(.primary):not(.danger):hover:not(:disabled) { background: rgba(255,25
   max-width: 90%;
 }
 
+/* ---------- FACE OFF COUNTDOWN ---------- */
+.overlay-countdown {
+  background: rgba(0,0,0,0.88);
+  flex-direction: column;
+  z-index: 60;
+}
+.countdown-heart {
+  color: var(--accent);
+  font-size: 4.5rem;
+  line-height: 1;
+  animation: heartbeat-pulse 1s ease-in-out infinite;
+  filter: drop-shadow(0 0 18px rgba(192,57,43,0.75));
+}
+.countdown-num {
+  font-size: 5.5rem;
+  font-weight: 800;
+  color: var(--gold);
+  line-height: 1.1;
+  margin-top: 6px;
+  text-shadow: 0 0 24px rgba(212,175,55,0.6);
+  animation: countdown-pop 1s ease-in-out infinite;
+}
+.countdown-label {
+  margin-top: 10px;
+  font-size: 1.1rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--cream);
+  opacity: 0.85;
+}
+
+@keyframes heartbeat-pulse {
+  0%   { transform: scale(1); }
+  20%  { transform: scale(1.28); }
+  35%  { transform: scale(1); }
+  50%  { transform: scale(1.16); }
+  65%  { transform: scale(1); }
+  100% { transform: scale(1); }
+}
+
+@keyframes countdown-pop {
+  0%   { transform: scale(0.7); opacity: 0.3; }
+  15%  { transform: scale(1.15); opacity: 1; }
+  30%  { transform: scale(1); opacity: 1; }
+  85%  { transform: scale(1); opacity: 1; }
+  100% { transform: scale(0.85); opacity: 0.15; }
+}
+
+/* ---------- DRAMATIC REVEAL ---------- */
+.overlay-reveal { z-index: 55; }
+.reveal-box {
+  max-width: 620px;
+  width: 100%;
+  animation: reveal-box-in 0.35s ease;
+}
+@keyframes reveal-box-in {
+  0% { transform: scale(0.85); opacity: 0; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+.reveal-hands {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 14px;
+  margin: 16px 0 6px;
+}
+.reveal-side { flex: 1; min-width: 0; }
+.reveal-side-name {
+  font-size: 0.8rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--gold);
+  margin-bottom: 8px;
+}
+.reveal-vs {
+  align-self: center;
+  font-size: 0.8rem;
+  font-weight: 800;
+  color: rgba(247,243,234,0.4);
+  padding-top: 24px;
+}
+.reveal-cards {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 5px;
+  min-height: var(--card-h);
+}
+.reveal-cards .card {
+  opacity: 0;
+  transform: translateY(-16px) rotateY(90deg) scale(0.8);
+  animation: card-flip-in 0.4s ease forwards;
+}
+@keyframes card-flip-in {
+  0%   { opacity: 0; transform: translateY(-16px) rotateY(90deg) scale(0.8); }
+  60%  { opacity: 1; transform: translateY(2px) rotateY(0deg) scale(1.05); }
+  100% { opacity: 1; transform: translateY(0) rotateY(0deg) scale(1); }
+}
+.reveal-total {
+  margin-top: 10px;
+  font-size: 1.5rem;
+  font-weight: 800;
+  color: var(--gold);
+  opacity: 0;
+  transform: scale(0.5);
+  animation: total-pop 0.5s ease forwards;
+  animation-delay: 0.9s;
+}
+.reveal-total.winner {
+  color: #ffe27a;
+  text-shadow: 0 0 16px rgba(255,226,122,0.75);
+}
+@keyframes total-pop {
+  0%   { opacity: 0; transform: scale(0.5); }
+  60%  { opacity: 1; transform: scale(1.25); }
+  100% { opacity: 1; transform: scale(1); }
+}
+
 @media (max-width: 420px) {
   :root { --card-w: 52px; --card-h: 74px; }
   .room-code { font-size: 2.2rem; }
+  .reveal-hands { gap: 6px; }
+  .reveal-vs { padding-top: 16px; }
+  .countdown-num { font-size: 4.2rem; }
+  .countdown-heart { font-size: 3.4rem; }
 }

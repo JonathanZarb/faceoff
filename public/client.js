@@ -5,6 +5,7 @@
   const RANK_ORDER = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K'];
   const POLL_MS = 1500;
   const RECONNECT_FLASH_MS = 2000;
+  const COUNTDOWN_BEATS = 3; // 3 heartbeat thumps over 3 seconds, synced to 3-2-1
 
   const state = {
     code: null,
@@ -17,7 +18,13 @@
     autoSort: false,
     oppWasConnected: undefined, // undefined until we've seen a real reading
     reconnectFlashTimer: null,
+    revealSequenceActive: false, // countdown+heartbeat currently playing
+    revealSequenceDone: false, // sequence already played for the current result
   };
+
+  function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
 
   function sortKey(card) {
     if (card.rank === 'JOKER') return 100; // Jokers always sort to the right
@@ -139,6 +146,47 @@
     if (card.rank === 'A') return 1;
     if (['J', 'Q', 'K'].includes(card.rank)) return 10;
     return parseInt(card.rank, 10);
+  }
+
+  // ---------- heartbeat sound (synthesized, no external asset) ----------
+  let audioCtx = null;
+  function getAudioCtx() {
+    if (audioCtx) return audioCtx;
+    try {
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      audioCtx = Ctx ? new Ctx() : null;
+    } catch (e) {
+      audioCtx = null;
+    }
+    return audioCtx;
+  }
+
+  function playThump(ctx, startTime, freq, duration, peakGain) {
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(freq, startTime);
+    gain.gain.setValueAtTime(0.0001, startTime);
+    gain.gain.exponentialRampToValueAtTime(peakGain, startTime + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, startTime + duration);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(startTime);
+    osc.stop(startTime + duration + 0.03);
+  }
+
+  // A low "lub-dub" thump repeated once per second, in sync with the 3-2-1
+  // visual countdown. Purely synthesized so no audio file is needed.
+  function playHeartbeatSequence(beats) {
+    const ctx = getAudioCtx();
+    if (!ctx) return;
+    if (ctx.state === 'suspended') ctx.resume().catch(() => {});
+    const now = ctx.currentTime;
+    for (let i = 0; i < beats; i++) {
+      const t = now + i * 1.0;
+      playThump(ctx, t, 58, 0.16, 0.9); // "lub" - strong, low
+      playThump(ctx, t + 0.18, 44, 0.22, 0.55); // "dub" - lower, softer
+    }
   }
 
   // ---------- connection status (opponent going offline / coming back) ----------
@@ -283,51 +331,133 @@
       render(currentState);
     };
 
-    // overlays
-    if (view.phase === 'hand_over' && hand.result) {
-      renderHandOver(view, hand.result, me, opp);
+    // overlays: the dramatic Face Off reveal (countdown + heartbeat, then
+    // cards + totals) covers both the hand_over and match_over cases, since
+    // the server can jump straight from playing -> match_over when a call
+    // also ends the match.
+    if ((view.phase === 'hand_over' || view.phase === 'match_over') && hand.result) {
+      triggerFaceOffReveal(view);
     } else {
-      $('overlay-handover').classList.add('hidden');
-    }
-
-    if (view.phase === 'match_over') {
-      renderMatchOver(view, me, opp);
-    } else {
-      $('overlay-matchover').classList.add('hidden');
+      // Fresh hand dealt (or no room yet) - reset the sequence so the next
+      // Face Off call plays the full countdown again.
+      state.revealSequenceActive = false;
+      state.revealSequenceDone = false;
+      $('overlay-countdown').classList.add('hidden');
+      $('overlay-reveal').classList.add('hidden');
     }
   }
 
-  function renderHandOver(view, result, me, opp) {
-    $('overlay-matchover').classList.add('hidden');
-    $('overlay-handover').classList.remove('hidden');
-    const iAmCaller = result.callerId === view.you;
-    const iWon = iAmCaller ? result.callerWins : !result.callerWins;
+  function triggerFaceOffReveal(view) {
+    if (state.revealSequenceDone) {
+      // Sequence already played for this result - just keep the reveal
+      // overlay's content fresh (e.g. opponent connection status changed).
+      renderReveal(view);
+      return;
+    }
+    if (state.revealSequenceActive) return; // already mid-countdown; don't restart
+    state.revealSequenceActive = true;
+    runFaceOffSequence();
+  }
 
-    $('handover-title').textContent = iWon ? 'You win the hand!' : 'You lose the hand';
+  async function runFaceOffSequence() {
+    $('overlay-reveal').classList.add('hidden');
+    const overlay = $('overlay-countdown');
+    const num = $('countdown-num');
+    overlay.classList.remove('hidden');
+    playHeartbeatSequence(COUNTDOWN_BEATS);
+
+    for (let n = COUNTDOWN_BEATS; n >= 1; n--) {
+      num.textContent = String(n);
+      num.style.animation = 'none';
+      void num.offsetWidth; // restart the pulse animation for each tick
+      num.style.animation = '';
+      await sleep(1000);
+    }
+
+    overlay.classList.add('hidden');
+    state.revealSequenceActive = false;
+    state.revealSequenceDone = true;
+    if (currentState) renderReveal(currentState);
+  }
+
+  function renderReveal(view) {
+    const hand = view.hand;
+    const result = hand && hand.result;
+    if (!result) return;
+
+    const me = view.players.find((p) => p.id === view.you);
+    const opp = view.players.find((p) => p.id !== view.you);
+
+    $('overlay-countdown').classList.add('hidden');
+    $('overlay-reveal').classList.remove('hidden');
+
+    const isCallerMe = result.callerId === view.you;
+    const myTotal = isCallerMe ? result.callerTotal : result.opponentTotal;
+    const oppTotal = isCallerMe ? result.opponentTotal : result.callerTotal;
+    const myDelta = isCallerMe ? result.callerDelta : result.opponentDelta;
+    const oppDelta = isCallerMe ? result.opponentDelta : result.callerDelta;
+    const iWon = isCallerMe ? result.callerWins : !result.callerWins;
+
+    $('reveal-my-name').textContent = `${me ? me.name : 'You'}${isCallerMe ? ' (called Face Off)' : ''}`;
+    $('reveal-opp-name').textContent = `${opp ? opp.name : 'Opponent'}${!isCallerMe ? ' (called Face Off)' : ''}`;
+
+    const myCardsEl = $('reveal-my-cards');
+    const oppCardsEl = $('reveal-opp-cards');
+    myCardsEl.innerHTML = '';
+    oppCardsEl.innerHTML = '';
+
+    let delay = 0;
+    sortedHand(hand.myHand || []).forEach((card) => {
+      const el = cardFaceEl(card, { clickable: false });
+      el.style.animationDelay = `${delay}ms`;
+      delay += 70;
+      myCardsEl.appendChild(el);
+    });
+    delay = 0;
+    sortedHand(hand.opponentHand || []).forEach((card) => {
+      const el = cardFaceEl(card, { clickable: false });
+      el.style.animationDelay = `${delay}ms`;
+      delay += 70;
+      oppCardsEl.appendChild(el);
+    });
+
+    $('reveal-my-total').textContent = `${myTotal} pts`;
+    $('reveal-opp-total').textContent = `${oppTotal} pts`;
+    $('reveal-my-total').classList.toggle('winner', iWon);
+    $('reveal-opp-total').classList.toggle('winner', !iWon);
+
+    $('reveal-title').textContent = iWon ? 'You win the hand!' : 'You lose the hand';
 
     let reasonText;
     if (result.reason === 'tie_caller_loses') reasonText = 'Tied hands — the caller loses ties.';
     else if (result.callerWins) reasonText = `${result.callerName} called Face Off with the lower hand.`;
     else reasonText = `${result.callerName} called Face Off but did not have the lower hand.`;
 
-    $('handover-detail').innerHTML = `
-      <span class="big">${result.callerName}: ${result.callerTotal} pts &nbsp;|&nbsp; ${result.opponentName}: ${result.opponentTotal} pts</span>
+    $('reveal-detail').innerHTML = `
       ${reasonText}<br/>
-      ${result.callerName} ${result.callerDelta > 0 ? `+${result.callerDelta} pts` : 'no penalty'} &middot;
-      ${result.opponentName} ${result.opponentDelta > 0 ? `+${result.opponentDelta} pts` : 'no penalty'}
+      ${me ? me.name : 'You'} ${myDelta > 0 ? `+${myDelta} pts` : 'no penalty'} &middot;
+      ${opp ? opp.name : 'Opponent'} ${oppDelta > 0 ? `+${oppDelta} pts` : 'no penalty'}
     `;
 
-    $('btn-next-hand').onclick = () => doAction(() => sendAction('nextHand'));
-  }
+    const btnNext = $('btn-next-hand');
+    const btnNewMatch = $('btn-new-match');
+    const matchDetail = $('reveal-matchover-detail');
 
-  function renderMatchOver(view, me, opp) {
-    $('overlay-handover').classList.add('hidden');
-    $('overlay-matchover').classList.remove('hidden');
-    const iWon = view.matchWinnerId === view.you;
-    $('matchover-title').textContent = iWon ? 'You won the match!' : 'You lost the match';
-    $('matchover-detail').innerHTML = `Final score &mdash; ${me ? me.name : 'You'}: ${view.scores[view.you] || 0} pts,
-      ${opp ? opp.name : 'Opponent'}: ${opp ? view.scores[opp.id] || 0 : 0} pts.`;
-    $('btn-new-match').onclick = () => doAction(() => sendAction('newMatch'));
+    if (view.phase === 'match_over') {
+      const matchWon = view.matchWinnerId === view.you;
+      $('reveal-title').textContent = matchWon ? 'You won the match!' : 'You lost the match';
+      matchDetail.classList.remove('hidden');
+      matchDetail.innerHTML = `Final score &mdash; ${me ? me.name : 'You'}: ${view.scores[view.you] || 0} pts,
+        ${opp ? opp.name : 'Opponent'}: ${opp ? view.scores[opp.id] || 0 : 0} pts.`;
+      btnNext.classList.add('hidden');
+      btnNewMatch.classList.remove('hidden');
+      btnNewMatch.onclick = () => doAction(() => sendAction('newMatch'));
+    } else {
+      matchDetail.classList.add('hidden');
+      btnNewMatch.classList.add('hidden');
+      btnNext.classList.remove('hidden');
+      btnNext.onclick = () => doAction(() => sendAction('nextHand'));
+    }
   }
 
   // ---------- action wrapper + polling ----------

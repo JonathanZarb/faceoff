@@ -89,21 +89,38 @@
 
   </section>
 
-  <!-- HAND OVER OVERLAY -->
-  <div id="overlay-handover" class="overlay hidden">
-    <div class="overlay-box">
-      <h2 id="handover-title">Face Off!</h2>
-      <div id="handover-detail" class="overlay-detail"></div>
-      <button id="btn-next-hand" class="primary">Next Hand</button>
-    </div>
+  <!-- FACE OFF COUNTDOWN OVERLAY -->
+  <div id="overlay-countdown" class="overlay overlay-countdown hidden">
+    <div class="countdown-heart">&hearts;</div>
+    <div class="countdown-num" id="countdown-num">3</div>
+    <div class="countdown-label">Face&nbsp;Off!</div>
   </div>
 
-  <!-- MATCH OVER OVERLAY -->
-  <div id="overlay-matchover" class="overlay hidden">
-    <div class="overlay-box">
-      <h2 id="matchover-title">Match Over</h2>
-      <div id="matchover-detail" class="overlay-detail"></div>
-      <button id="btn-new-match" class="primary">New Match</button>
+  <!-- DRAMATIC REVEAL OVERLAY (hand over or match over) -->
+  <div id="overlay-reveal" class="overlay overlay-reveal hidden">
+    <div class="overlay-box reveal-box">
+      <h2 id="reveal-title">Face Off!</h2>
+
+      <div class="reveal-hands">
+        <div class="reveal-side">
+          <div class="reveal-side-name" id="reveal-my-name">You</div>
+          <div class="reveal-cards" id="reveal-my-cards"></div>
+          <div class="reveal-total" id="reveal-my-total">0 pts</div>
+        </div>
+        <div class="reveal-vs">VS</div>
+        <div class="reveal-side">
+          <div class="reveal-side-name" id="reveal-opp-name">Opponent</div>
+          <div class="reveal-cards" id="reveal-opp-cards"></div>
+          <div class="reveal-total" id="reveal-opp-total">0 pts</div>
+        </div>
+      </div>
+
+      <div id="reveal-detail" class="overlay-detail"></div>
+
+      <div id="reveal-matchover-detail" class="overlay-detail hidden"></div>
+
+      <button id="btn-next-hand" class="primary">Next Hand</button>
+      <button id="btn-new-match" class="primary hidden">New Match</button>
     </div>
   </div>
 
