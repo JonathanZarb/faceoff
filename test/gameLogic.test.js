@@ -92,9 +92,62 @@ test('isValidRun: joker extends sequence at an edge', () => {
   assert.equal(gl.isValidRun([card('J', 'H'), card('Q', 'H'), card('JOKER', null)]), true);
 });
 
-test('isValidRun: A can only extend downward (A is low, no wraparound to K)', () => {
-  // A,2,JOKER -> joker must be "3" (extend up) since below A is out of range
+test('isValidRun: A,2,JOKER valid (joker extends upward to 3, or wraps down to K)', () => {
   assert.equal(gl.isValidRun([card('A', 'H'), card('2', 'H'), card('JOKER', null)]), true);
+});
+
+test('isValidRun: K and A are adjacent (round-the-corner run)', () => {
+  assert.equal(gl.isValidRun([card('Q', 'H'), card('K', 'H'), card('A', 'H')]), true);
+  assert.equal(gl.isValidRun([card('K', 'H'), card('A', 'H'), card('2', 'H')]), true);
+});
+
+test('isValidRun: Q,K,A,2 is a valid 4-run through the K-A-2 corner', () => {
+  assert.equal(gl.isValidRun([card('Q', 'H'), card('K', 'H'), card('A', 'H'), card('2', 'H')]), true);
+});
+
+test('isValidRun: K,A,2,3,4 is a valid 5-run wrapping through the corner and extending', () => {
+  assert.equal(
+    gl.isValidRun([card('K', 'H'), card('A', 'H'), card('2', 'H'), card('3', 'H'), card('4', 'H')]),
+    true
+  );
+});
+
+test('isValidRun: wraparound does not make unrelated ranks adjacent', () => {
+  // K and 2 are NOT adjacent to each other without an Ace bridging them.
+  assert.equal(gl.isValidRun([card('J', 'H'), card('K', 'H'), card('2', 'H')]), false);
+});
+
+test('orderMeldForDisplay: run with an internal joker gap places it in that exact slot', () => {
+  const ordered = gl.orderMeldForDisplay([card('7', 'H'), card('5', 'H'), card('JOKER', null)]);
+  assert.deepEqual(
+    ordered.map((c) => c.rank),
+    ['5', 'JOKER', '7']
+  );
+});
+
+test('orderMeldForDisplay: Q,K,A,2 orders correctly through the corner', () => {
+  const ordered = gl.orderMeldForDisplay([card('2', 'S'), card('A', 'S'), card('Q', 'S'), card('K', 'S')]);
+  assert.deepEqual(
+    ordered.map((c) => c.rank),
+    ['Q', 'K', 'A', '2']
+  );
+});
+
+test('orderMeldForDisplay: same-rank group orders deterministically by suit', () => {
+  const ordered = gl.orderMeldForDisplay([card('7', 'S'), card('7', 'H'), card('7', 'D')]);
+  assert.deepEqual(
+    ordered.map((c) => c.suit),
+    ['H', 'D', 'S']
+  );
+});
+
+test('orderMeldForDisplay: single card and already-ordered runs pass through unchanged', () => {
+  assert.deepEqual(gl.orderMeldForDisplay([card('7', 'H')]).map((c) => c.rank), ['7']);
+  const ordered = gl.orderMeldForDisplay([card('4', 'C'), card('5', 'C'), card('6', 'C')]);
+  assert.deepEqual(
+    ordered.map((c) => c.rank),
+    ['4', '5', '6']
+  );
 });
 
 test('isValidRun: not enough room fails (K,K duplicate-ish edge / out of range)', () => {

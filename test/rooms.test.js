@@ -133,15 +133,16 @@ test('match ends when a score crosses matchTarget; other player wins', () => {
   room.hand.hands[p2] = [card('4', 'H'), card('6', 'S')]; // 10
 
   rooms.doCallFaceOff(room, p1obj);
-  // p1 gets 10 + 20 penalty = 30 >= 15 -> match over, p2 (opponent) wins
+  // p1 gets 10 + 25 penalty = 35 >= 15 -> match over, p2 (opponent) wins
   assert.equal(room.phase, 'match_over');
   assert.equal(room.matchWinnerId, p2);
 });
 
-test('doNextHand deals a fresh hand after hand_over, same starting player persists', () => {
+test('doNextHand deals a fresh hand after hand_over, and the starting player alternates', () => {
   const { room, p1, p2 } = makeRoomWithHand();
   const p1obj = room.players.find((p) => p.id === p1);
   const startingBefore = room.startingPlayerId;
+  const expectedNextStarter = startingBefore === p1 ? p2 : p1;
   room.hand.turnPlayerId = p1;
   room.hand.turnPhase = 'await_discard';
   room.hand.hands[p1] = [card('A', 'H')];
@@ -153,8 +154,8 @@ test('doNextHand deals a fresh hand after hand_over, same starting player persis
   const res = rooms.doNextHand(room, p1obj);
   assert.equal(res.error, undefined);
   assert.equal(room.phase, 'playing');
-  assert.equal(room.startingPlayerId, startingBefore);
-  assert.equal(room.hand.turnPlayerId, startingBefore);
+  assert.equal(room.startingPlayerId, expectedNextStarter);
+  assert.equal(room.hand.turnPlayerId, expectedNextStarter);
   assert.equal(room.hand.turnPhase, 'await_discard');
   assert.equal(room.hand.hands[p1].length, 10);
   assert.equal(room.hand.hands[p2].length, 10);
@@ -283,4 +284,122 @@ test('authenticate() refreshes lastSeen, keeping an actively-polling player conn
   const result = rooms.authenticate(room.code, p1obj.id, p1obj.token);
   assert.equal(result.error, undefined);
   assert.ok(Date.now() - result.player.lastSeen < 100);
+});
+
+test('assafPenalty is 25: a miscall costs the caller their hand total plus 25', () => {
+  const { room, p1, p2 } = makeRoomWithHand();
+  const p1obj = room.players.find((p) => p.id === p1);
+  room.hand.turnPlayerId = p1;
+  room.hand.turnPhase = 'await_discard';
+  room.hand.hands[p1] = [card('5', 'H'), card('5', 'S')]; // 10, tie -> caller loses
+  room.hand.hands[p2] = [card('4', 'H'), card('6', 'S')]; // 10
+
+  rooms.doCallFaceOff(room, p1obj);
+  assert.equal(room.assafPenalty, 25);
+  assert.equal(room.scores[p1], 10 + 25);
+  assert.equal(room.scores[p2], 0);
+});
+
+test('starting player alternates every new hand, including across doNextHand', () => {
+  const { room, p1, p2 } = makeRoomWithHand();
+  const p1obj = room.players.find((p) => p.id === p1);
+  const first = room.startingPlayerId;
+  const second = first === p1 ? p2 : p1;
+
+  room.hand.turnPlayerId = first;
+  room.hand.turnPhase = 'await_discard';
+  room.hand.hands[first] = [card('A', 'H')];
+  room.hand.hands[second] = [card('K', 'H'), card('K', 'S')];
+  rooms.doCallFaceOff(room, room.players.find((p) => p.id === first));
+  assert.equal(room.phase, 'hand_over');
+
+  rooms.doNextHand(room, room.players.find((p) => p.id === first));
+  assert.equal(room.startingPlayerId, second);
+  assert.equal(room.hand.turnPlayerId, second);
+
+  // And back again on the following hand.
+  room.hand.turnPlayerId = second;
+  room.hand.turnPhase = 'await_discard';
+  room.hand.hands[second] = [card('A', 'D')];
+  room.hand.hands[first] = [card('K', 'D'), card('K', 'C')];
+  rooms.doCallFaceOff(room, room.players.find((p) => p.id === second));
+  rooms.doNextHand(room, room.players.find((p) => p.id === second));
+  assert.equal(room.startingPlayerId, first);
+});
+
+test('starting player keeps alternating across a new match (not re-randomized)', () => {
+  const { room, p1, p2 } = makeRoomWithHand();
+  const p1obj = room.players.find((p) => p.id === p1);
+  room.matchTarget = 5;
+  room.hand.turnPlayerId = p1;
+  room.hand.turnPhase = 'await_discard';
+  room.hand.hands[p1] = [card('5', 'H')];
+  room.hand.hands[p2] = [card('5', 'S')];
+  rooms.doCallFaceOff(room, p1obj); // tie -> p1 loses, 5+25=30 >= matchTarget 5 -> match_over
+  assert.equal(room.phase, 'match_over');
+  const startingBeforeNewMatch = room.startingPlayerId;
+  const expectedNext = startingBeforeNewMatch === p1 ? p2 : p1;
+
+  rooms.doNewMatch(room, p1obj);
+  assert.equal(room.phase, 'playing');
+  assert.equal(room.startingPlayerId, expectedNext);
+});
+
+test('doDiscard stores a run in rank order with the joker filling its exact gap', () => {
+  const { room, p1 } = makeRoomWithHand();
+  const p1obj = room.players.find((p) => p.id === p1);
+  room.hand.turnPlayerId = p1;
+  room.hand.turnPhase = 'await_discard';
+  // Selected out of order on purpose - server should still store them in
+  // sequence order with the joker standing in for the missing '6'.
+  const seven = card('7', 'H');
+  const five = card('5', 'H');
+  const joker = card('JOKER', null);
+  room.hand.hands[p1] = [seven, five, joker, card('2', 'S')];
+
+  const result = rooms.doDiscard(room, p1obj, { cardIds: [seven.id, five.id, joker.id] });
+  assert.equal(result.error, undefined);
+  assert.deepEqual(
+    room.hand.pendingDiscard.map((c) => c.rank),
+    ['5', 'JOKER', '7']
+  );
+});
+
+test('doDraw records lastDraw; deck draws stay hidden from the opponent, discard draws are visible to both', () => {
+  const { room, p1, p2 } = makeRoomWithHand();
+  const p1obj = room.players.find((p) => p.id === p1);
+  const p2obj = room.players.find((p) => p.id === p2);
+  room.hand.turnPlayerId = p1;
+  room.hand.turnPhase = 'await_discard';
+
+  const deckCard = card('9', 'C');
+  room.hand.drawPile = [deckCard, ...room.hand.drawPile];
+
+  // p1 discards one card, then draws from the deck.
+  const p1Card = room.hand.hands[p1][0];
+  rooms.doDiscard(room, p1obj, { cardIds: [p1Card.id] });
+  rooms.doDraw(room, p1obj, { source: 'deck' });
+
+  const p1View = rooms.viewFor(room, p1);
+  const p2View = rooms.viewFor(room, p2);
+  assert.equal(p1View.hand.lastDraw.source, 'deck');
+  assert.equal(p1View.hand.lastDraw.playerId, p1);
+  assert.equal(p1View.hand.lastDraw.card.id, deckCard.id); // drawer sees their own card
+  assert.equal(p2View.hand.lastDraw.card, null); // opponent does NOT see a hidden deck draw
+
+  // p1's discard is now the accessible pile. p2 draws it - that card was
+  // already face-up (public info), so both players should see it.
+  assert.equal(room.hand.discardPile[0].id, p1Card.id);
+  const p2Card = room.hand.hands[p2][0];
+  rooms.doDiscard(room, p2obj, { cardIds: [p2Card.id] });
+  const drawResult = rooms.doDraw(room, p2obj, { source: 'discard', cardId: p1Card.id });
+  assert.equal(drawResult.error, undefined);
+
+  const p1ViewAfter = rooms.viewFor(room, p1);
+  const p2ViewAfter = rooms.viewFor(room, p2);
+  assert.equal(p1ViewAfter.hand.lastDraw.source, 'discard');
+  assert.equal(p2ViewAfter.hand.lastDraw.source, 'discard');
+  assert.ok(p1ViewAfter.hand.lastDraw.card); // opponent (p1) can see a discard-pile draw
+  assert.equal(p1ViewAfter.hand.lastDraw.card.id, p1Card.id);
+  assert.equal(p2ViewAfter.hand.lastDraw.card.id, p1Card.id);
 });
