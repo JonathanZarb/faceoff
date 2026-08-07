@@ -20,12 +20,12 @@ Standard 52-card deck + 2 Jokers. Point values: A=1, 2–10 = face value, J/Q/K=
 
 Each hand, both players are dealt 10 cards. A draw pile and a discard pile sit on the table. On your turn you either:
 
-- **Draw**, then **discard** — draw one card (from the draw pile, or the single card group your opponent discarded last turn — once it's someone else's turn, that group is no longer available), then discard a single card, a same-rank group (e.g. three 7s), or a same-suit run of 3+ (e.g. 4-5-6 of hearts). Jokers are wild in melds.
-- **Call "Face Off"** instead of drawing — only allowed if your hand totals 10 points or less and you hold no Joker. Both hands are revealed: if your total is strictly lower, you win the hand. A tie, or a higher total, means you lose (the caller loses ties).
+- **Discard**, then **draw** — discard a single card, a same-rank group (e.g. three 7s), or a same-suit run of 3+ (e.g. 4-5-6 of hearts; Aces run both low, A-2-3, and high through the corner, Q-K-A-2 style — K and A are adjacent). Jokers are wild in melds and, when used to fill a gap in a run, are displayed in that exact slot (e.g. 5, JOKER, 7). Then draw one card to finish your turn (from the draw pile, or the single card group your opponent just discarded — once it's someone else's turn, that group is no longer available).
+- **Call "Face Off"** instead of discarding — only allowed if your hand totals 10 points or less and you hold no Joker. Both hands are revealed: if your total is strictly lower, you win the hand. A tie, or a higher total, means you lose (the caller loses ties).
 
-Scoring carries across hands in a match: the loser of each hand adds their hand's point total to their running score (a Joker still in hand counts as 15). If you call Face Off and lose, you also eat a 20-point penalty on top. First player to reach 100 points loses the match.
+Scoring carries across hands in a match: the loser of each hand adds their hand's point total to their running score (a Joker still in hand counts as 15). If you call Face Off and lose, you also eat a 25-point penalty on top. First player to reach 100 points loses the match. Who starts alternates every hand (including into a new match), and every hand is dealt from a freshly shuffled deck.
 
-These two numbers — 100-point match target and the 20-point miscall penalty — are the easiest things to tune if you want a faster or slower match. They live at the top of `rooms.js` (`MATCH_TARGET`, `ASSAF_PENALTY`).
+These two numbers — 100-point match target and the 25-point miscall penalty — are the easiest things to tune if you want a faster or slower match. They live at the top of `rooms.js` (`MATCH_TARGET`, `ASSAF_PENALTY`).
 
 ## Project layout
 

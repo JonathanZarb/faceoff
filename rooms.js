@@ -8,7 +8,7 @@ const gl = require('./gameLogic');
 
 const HAND_SIZE = 10;
 const MATCH_TARGET = 100;
-const ASSAF_PENALTY = 20;
+const ASSAF_PENALTY = 25;
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no 0/O/1/I
 // A player is considered disconnected once this long has passed since their
 // last authenticated request (state poll or action). Comfortably more than
@@ -44,6 +44,14 @@ function log(room, message) {
 }
 
 function dealNewHand(room) {
+  // Alternate who starts each new hand - including across a new match, so
+  // the very first hand of a room is the only randomly-chosen one and every
+  // hand after that strictly alternates.
+  if (room.hand) {
+    room.startingPlayerId = opponentOf(room, room.startingPlayerId).id;
+  }
+
+  // Fresh deck, fully reshuffled, every hand - no carryover state at all.
   const deck = gl.shuffle(gl.createDeck());
   const { p1Hand, p2Hand, drawPile, discardPile } = gl.dealHands(deck, HAND_SIZE);
   const [p1, p2] = room.players;
@@ -56,6 +64,7 @@ function dealNewHand(room) {
     turnPlayerId: room.startingPlayerId,
     turnPhase: 'await_discard',
     result: null,
+    lastDraw: null, // most recent draw action this hand, for opponent visibility
   };
   room.phase = 'playing';
   log(room, `New hand dealt. ${playerById(room, room.startingPlayerId).name} goes first.`);
@@ -162,7 +171,9 @@ function doDiscard(room, player, { cardIds }) {
   }
 
   hand.hands[player.id] = myHand.filter((c) => !uniqueIds.has(c.id));
-  hand.pendingDiscard = cards;
+  // Store in display order - a run reads in rank order with any Joker sitting
+  // in the exact slot of the rank it's standing in for (e.g. 5, JOKER, 7).
+  hand.pendingDiscard = gl.orderMeldForDisplay(cards);
   hand.turnPhase = 'await_draw';
   room.lastActivity = Date.now();
   log(room, `${player.name} discarded ${cards.length} card(s).`);
@@ -193,6 +204,17 @@ function doDraw(room, player, { source, cardId }) {
   }
 
   myHand.push(drawnCard);
+
+  // Record the draw so the opponent can be shown it happened - and, when it
+  // came from the discard pile, exactly which card, since that pile was
+  // already face-up and public. A deck draw stays hidden from them (only the
+  // drawer, or viewFor's own-player check, ever sees that card here).
+  hand.lastDraw = {
+    playerId: player.id,
+    source,
+    card: drawnCard,
+    at: Date.now(),
+  };
 
   // Turn is complete: whatever's left of the pile you drew from is no longer
   // accessible, and the cards you discarded this turn become the new pile -
@@ -277,7 +299,8 @@ function doNewMatch(room, player) {
   if (room.phase !== 'match_over') return { error: 'Match is not finished.' };
   for (const p of room.players) room.scores[p.id] = 0;
   room.matchWinnerId = null;
-  room.startingPlayerId = room.players[crypto.randomInt(2)].id;
+  // dealNewHand alternates the starting player itself - this keeps the
+  // alternation going continuously across the match boundary too.
   dealNewHand(room);
   room.lastActivity = Date.now();
   log(room, 'New match started.');
@@ -330,6 +353,21 @@ function viewFor(room, playerId) {
       // secrecy holds until then, and the key itself is omitted (not just
       // null) so it can't leak hand size or existence before the reveal.
       ...(h.result ? { opponentHand: oppHand } : {}),
+      // Both players get to see that a draw happened and where from. The
+      // actual card is included for the drawer themselves (it's their own
+      // hand) and for anyone when it came from the discard pile (that pile
+      // was already face-up, so this isn't new hidden information) - but
+      // stays masked when it's the opponent's deck draw, same as a real
+      // game where you can't see what someone else drew blind.
+      lastDraw: h.lastDraw
+        ? {
+            playerId: h.lastDraw.playerId,
+            playerName: playerById(room, h.lastDraw.playerId).name,
+            source: h.lastDraw.source,
+            card: h.lastDraw.playerId === playerId || h.lastDraw.source === 'discard' ? h.lastDraw.card : null,
+            at: h.lastDraw.at,
+          }
+        : null,
     },
   };
 }
