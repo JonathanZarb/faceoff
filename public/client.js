@@ -20,6 +20,9 @@
     reconnectFlashTimer: null,
     revealSequenceActive: false, // countdown+heartbeat currently playing
     revealSequenceDone: false, // sequence already played for the current result
+    lastSeenDrawAt: undefined, // dedupe key for the draw-pickup/opponent-draw-toast triggers
+    pickupHideTimer: null,
+    drawToastHideTimer: null,
   };
 
   function sleep(ms) {
@@ -331,6 +334,79 @@
     state.oppWasConnected = connected;
   }
 
+  // ---------- draw pickup display + opponent draw notice ----------
+  function cardMiniHtml(card) {
+    if (card.rank === 'JOKER') return '<span class="card-mini joker">★</span>';
+    const red = RED_SUITS.has(card.suit);
+    return `<span class="card-mini${red ? ' red' : ''}">${card.rank}${SUIT_SYMBOL[card.suit] || ''}</span>`;
+  }
+
+  // Fires exactly once per new draw (dedup'd on the server-stamped timestamp,
+  // and seeded rather than replayed on a fresh page load/resume): shows a
+  // large "you drew this" display for your own draws, or a small notice for
+  // the opponent's, so both players always know a draw happened and - for
+  // discard-pile draws, which were already public - exactly which card.
+  function handleDrawReveal(view, hand) {
+    const ld = hand.lastDraw;
+
+    if (!ld) {
+      state.lastSeenDrawAt = null;
+      return;
+    }
+
+    if (state.lastSeenDrawAt === undefined) {
+      // First render this session - don't replay a stale draw from before we loaded.
+      state.lastSeenDrawAt = ld.at;
+      return;
+    }
+
+    if (ld.at === state.lastSeenDrawAt) return; // already reacted to this one
+    state.lastSeenDrawAt = ld.at;
+
+    if (ld.playerId === view.you) {
+      if (ld.card) showMyPickup(ld.card);
+    } else {
+      showOpponentDrawToast(ld);
+    }
+  }
+
+  function showMyPickup(card) {
+    const overlay = $('overlay-pickup');
+    const slot = $('pickup-card-slot');
+    const label = $('pickup-label');
+    label.textContent = 'You drew';
+    slot.innerHTML = '';
+    slot.appendChild(cardFaceEl(card, { clickable: false }));
+
+    // Restart the entrance/settle animation even if this fires again quickly.
+    overlay.classList.remove('hidden');
+    slot.style.animation = 'none';
+    label.style.animation = 'none';
+    void overlay.offsetWidth;
+    slot.style.animation = '';
+    label.style.animation = '';
+
+    clearTimeout(state.pickupHideTimer);
+    state.pickupHideTimer = setTimeout(() => {
+      overlay.classList.add('hidden');
+    }, 2000);
+  }
+
+  function showOpponentDrawToast(ld) {
+    const el = $('draw-toast');
+    const name = ld.playerName || 'Opponent';
+    if (ld.source === 'discard' && ld.card) {
+      el.innerHTML = `${name} picked up from the discard pile: ${cardMiniHtml(ld.card)}`;
+    } else {
+      el.textContent = `${name} drew from the draw pile`;
+    }
+    el.classList.remove('hidden');
+    clearTimeout(state.drawToastHideTimer);
+    state.drawToastHideTimer = setTimeout(() => {
+      el.classList.add('hidden');
+    }, 2500);
+  }
+
   // ---------- render ----------
   let currentState = null;
 
@@ -358,6 +434,8 @@
     const hand = view.hand;
     if (!hand) return;
 
+    handleDrawReveal(view, hand);
+
     // opponent card backs
     const backs = $('opp-card-backs');
     backs.innerHTML = '';
@@ -367,18 +445,32 @@
       backs.appendChild(b);
     }
 
-    // turn indicator
+    // turn indicator - both a prominent banner and a pulsing highlight around
+    // whoever's score box it currently is, so whose turn it is never has to
+    // be inferred from button states alone.
     const ti = $('turn-indicator');
+    const myBox = $('my-score-box');
+    const oppBox = $('opp-score-box');
     if (view.phase === 'playing') {
       if (hand.isMyTurn) {
-        ti.textContent = hand.turnPhase === 'await_discard' ? 'Your turn — discard or call Face Off' : 'Your turn — draw a card';
+        ti.textContent =
+          hand.turnPhase === 'await_discard' ? '▶ YOUR TURN — discard or call Face Off' : '▶ YOUR TURN — draw a card';
         ti.classList.remove('waiting');
+        ti.classList.add('mine');
+        if (myBox) myBox.classList.add('active-turn');
+        if (oppBox) oppBox.classList.remove('active-turn');
       } else {
         ti.textContent = `Waiting for ${opp ? opp.name : 'opponent'}…`;
         ti.classList.add('waiting');
+        ti.classList.remove('mine');
+        if (myBox) myBox.classList.remove('active-turn');
+        if (oppBox) oppBox.classList.add('active-turn');
       }
     } else {
       ti.textContent = '';
+      ti.classList.remove('mine', 'waiting');
+      if (myBox) myBox.classList.remove('active-turn');
+      if (oppBox) oppBox.classList.remove('active-turn');
     }
 
     // draw pile

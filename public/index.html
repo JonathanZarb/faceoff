@@ -53,15 +53,18 @@
         <span class="mt-num" id="match-target-val">100</span>
         <span class="mt-label">loses</span>
       </div>
-      <div class="score-box">
+      <div class="score-box" id="my-score-box">
         <div class="score-name" id="my-name">You</div>
         <div class="score-value" id="my-score">0</div>
       </div>
     </header>
 
+    <div class="turn-banner" id="turn-banner">
+      <div class="turn-indicator" id="turn-indicator"></div>
+    </div>
+
     <div class="opponent-row">
       <div class="opp-cards" id="opp-card-backs"></div>
-      <div class="turn-indicator" id="turn-indicator"></div>
     </div>
 
     <div class="table-row">
@@ -87,6 +90,15 @@
     </div>
 
   </section>
+
+  <!-- DRAW PICKUP DISPLAY (your own draw, held for a beat before settling into your hand) -->
+  <div id="overlay-pickup" class="overlay-pickup hidden">
+    <div class="pickup-label" id="pickup-label">You drew</div>
+    <div class="pickup-card-slot" id="pickup-card-slot"></div>
+  </div>
+
+  <!-- OPPONENT DRAW NOTICE -->
+  <p id="draw-toast" class="draw-toast hidden"></p>
 
   <!-- FACE OFF COUNTDOWN OVERLAY -->
   <div id="overlay-countdown" class="overlay overlay-countdown hidden">

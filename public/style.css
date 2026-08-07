@@ -157,6 +157,17 @@ button:not(.primary):not(.danger):hover:not(:disabled) { background: rgba(255,25
   box-shadow: 0 0 10px rgba(231,76,60,0.35);
 }
 
+/* Whoever's turn it is gets a clear, pulsing gold highlight around their score box. */
+.score-box.active-turn {
+  border-color: var(--gold);
+  background: rgba(212,175,55,0.14);
+  animation: turn-pulse 1.7s ease-in-out infinite;
+}
+@keyframes turn-pulse {
+  0%, 100% { box-shadow: 0 0 6px rgba(212,175,55,0.3); }
+  50% { box-shadow: 0 0 20px rgba(212,175,55,0.8); }
+}
+
 .score-box.reconnecting {
   animation: reconnect-flash 2s ease forwards;
 }
@@ -211,7 +222,7 @@ button:not(.primary):not(.danger):hover:not(:disabled) { background: rgba(255,25
   align-items: center;
   justify-content: center;
   gap: 14px;
-  margin: 10px 0 18px;
+  margin: 6px 0 18px;
 }
 .opp-cards { display: flex; gap: -20px; }
 .opp-cards .card-back {
@@ -221,16 +232,40 @@ button:not(.primary):not(.danger):hover:not(:disabled) { background: rgba(255,25
 }
 .opp-cards .card-back:first-child { margin-left: 0; }
 
+.turn-banner {
+  display: flex;
+  justify-content: center;
+  margin: 4px 0 10px;
+}
 .turn-indicator {
-  font-size: 0.85rem;
-  font-weight: 700;
-  padding: 6px 14px;
-  border-radius: 20px;
+  font-size: 1rem;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  padding: 9px 22px;
+  border-radius: 24px;
   background: rgba(212,175,55,0.18);
   border: 1px solid var(--gold);
   color: var(--gold);
+  transition: background 0.3s ease, border-color 0.3s ease, color 0.3s ease, box-shadow 0.3s ease;
 }
-.turn-indicator.waiting { opacity: 0.55; border-color: rgba(255,255,255,0.3); color: rgba(247,243,234,0.7); }
+.turn-indicator.mine {
+  background: rgba(212,175,55,0.28);
+  border: 2px solid var(--gold);
+  color: #fff3cf;
+  box-shadow: 0 0 18px rgba(212,175,55,0.55);
+  animation: turn-indicator-pulse 1.7s ease-in-out infinite;
+}
+.turn-indicator.waiting {
+  opacity: 0.65;
+  border-color: rgba(255,255,255,0.25);
+  background: rgba(255,255,255,0.06);
+  color: rgba(247,243,234,0.75);
+  font-weight: 600;
+}
+@keyframes turn-indicator-pulse {
+  0%, 100% { box-shadow: 0 0 10px rgba(212,175,55,0.4); }
+  50% { box-shadow: 0 0 24px rgba(212,175,55,0.9); }
+}
 
 .table-row {
   display: flex;
@@ -495,6 +530,88 @@ button:not(.primary):not(.danger):hover:not(:disabled) { background: rgba(255,25
   100% { opacity: 1; transform: scale(1); }
 }
 
+/* ---------- DRAW PICKUP DISPLAY (your own draw) ---------- */
+.overlay-pickup {
+  position: fixed;
+  left: 50%;
+  top: 38%;
+  transform: translate(-50%, -50%);
+  z-index: 45;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  pointer-events: none;
+}
+.pickup-label {
+  font-size: 0.8rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--gold);
+  text-shadow: 0 0 12px rgba(212,175,55,0.7), 0 2px 6px rgba(0,0,0,0.8);
+  margin-bottom: 10px;
+  opacity: 0;
+  animation: pickup-label-in 0.3s ease forwards;
+}
+.pickup-card-slot {
+  animation: pickup-in 0.35s cubic-bezier(0.2, 0.9, 0.3, 1.3) forwards, pickup-settle 0.35s ease forwards 1.55s;
+}
+.pickup-card-slot .card {
+  width: calc(var(--card-w) * 1.9);
+  height: calc(var(--card-h) * 1.9);
+  box-shadow: 0 10px 30px rgba(0,0,0,0.55), 0 0 0 4px rgba(212,175,55,0.5);
+}
+.pickup-card-slot .card .rank { font-size: 2rem; }
+.pickup-card-slot .card .suit { font-size: 2.4rem; }
+@keyframes pickup-label-in {
+  0% { opacity: 0; transform: translateY(6px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+@keyframes pickup-in {
+  0% { opacity: 0; transform: scale(0.3) rotate(-8deg); }
+  70% { opacity: 1; transform: scale(1.08) rotate(2deg); }
+  100% { opacity: 1; transform: scale(1) rotate(0deg); }
+}
+@keyframes pickup-settle {
+  0% { opacity: 1; transform: scale(1) translateY(0); }
+  100% { opacity: 0; transform: scale(0.35) translateY(220px); }
+}
+
+/* ---------- OPPONENT DRAW NOTICE ---------- */
+.draw-toast {
+  position: fixed;
+  top: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(0,0,0,0.85);
+  border: 1px solid rgba(212,175,55,0.5);
+  color: var(--cream);
+  padding: 9px 18px;
+  border-radius: 8px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  box-shadow: 0 4px 14px rgba(0,0,0,0.5);
+  max-width: 90%;
+  z-index: 46;
+  text-align: center;
+}
+.draw-toast .card-mini {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 26px;
+  border-radius: 3px;
+  background: var(--cream);
+  color: var(--ink);
+  font-size: 0.68rem;
+  font-weight: 800;
+  margin-left: 6px;
+  vertical-align: middle;
+}
+.draw-toast .card-mini.red { color: var(--accent); }
+.draw-toast .card-mini.joker { color: #6a1b9a; font-size: 0.5rem; }
+
 @media (max-width: 420px) {
   :root { --card-w: 52px; --card-h: 74px; }
   .room-code { font-size: 2.2rem; }
@@ -502,4 +619,5 @@ button:not(.primary):not(.danger):hover:not(:disabled) { background: rgba(255,25
   .reveal-vs { padding-top: 16px; }
   .countdown-num { font-size: 4.2rem; }
   .countdown-heart { font-size: 3.4rem; }
+  .pickup-card-slot .card { width: calc(var(--card-w) * 1.6); height: calc(var(--card-h) * 1.6); }
 }
