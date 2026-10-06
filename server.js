@@ -72,6 +72,15 @@ function serveStatic(req, res, pathname) {
   });
 }
 
+// Browser-held H2H backup copies are untrusted input: only accept a plain
+// object, capped in size (rooms/h2h.js sanitizes the contents).
+function cleanBackup(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const keys = Object.keys(raw);
+  if (keys.length > 200) return undefined;
+  return raw;
+}
+
 function requireAuth(query, body) {
   const code = (query.code || body.code || '').toString();
   const playerId = (query.playerId || body.playerId || '').toString();
@@ -86,14 +95,14 @@ const server = http.createServer(async (req, res) => {
   try {
     if (pathname === '/api/rooms' && req.method === 'POST') {
       const body = await readBody(req);
-      const { room, playerId, token } = rooms.createRoom(body.name);
+      const { room, playerId, token } = rooms.createRoom(body.name, { mode: body.mode, target: body.target, h2hBackup: cleanBackup(body.h2hBackup) });
       return sendJson(res, 200, { code: room.code, playerId, token, state: rooms.viewFor(room, playerId) });
     }
 
     if (pathname.match(/^\/api\/rooms\/([A-Z0-9]+)\/join$/i) && req.method === 'POST') {
       const code = pathname.split('/')[3];
       const body = await readBody(req);
-      const result = rooms.joinRoom(code, body.name);
+      const result = rooms.joinRoom(code, body.name, { h2hBackup: cleanBackup(body.h2hBackup) });
       if (result.error) return sendJson(res, 400, { error: result.error });
       return sendJson(res, 200, {
         code: result.room.code,
@@ -127,6 +136,15 @@ const server = http.createServer(async (req, res) => {
           break;
         case 'callFaceOff':
           result = rooms.doCallFaceOff(room, player);
+          break;
+        case 'takeBack':
+          result = rooms.doTakeBack(room, player);
+          break;
+        case 'updateSettings':
+          result = rooms.doUpdateSettings(room, player, { mode: body.mode, target: body.target });
+          break;
+        case 'startGame':
+          result = rooms.doStartGame(room, player);
           break;
         case 'nextHand':
           result = rooms.doNextHand(room, player);

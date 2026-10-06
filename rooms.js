@@ -5,10 +5,17 @@
  */
 const crypto = require('crypto');
 const gl = require('./gameLogic');
+const h2h = require('./h2h');
 
 const HAND_SIZE = 10;
 const MATCH_TARGET = 100;
 const ASSAF_PENALTY = 25;
+// Game modes. 'classic': first player to reach the target loses.
+// 'exact': land on the target EXACTLY to win; go over it and you lose.
+const MODES = ['classic', 'exact'];
+const DEFAULT_TARGETS = { classic: 100, exact: 50 };
+const MIN_TARGET = 10;
+const MAX_TARGET = 500;
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no 0/O/1/I
 // A player is considered disconnected once this long has passed since their
 // last authenticated request (state poll or action). Comfortably more than
@@ -78,8 +85,28 @@ function opponentOf(room, id) {
   return room.players.find((p) => p.id !== id);
 }
 
-function createRoom(name) {
+// Names are shown to the other player, so keep them short and plain.
+function cleanName(name, fallback) {
+  const n = String(name == null ? '' : name).replace(/[\u0000-\u001f<>]/g, '').trim().slice(0, 20);
+  return n || fallback;
+}
+
+function normalizeSettings(input, current) {
+  const base = current || { mode: 'classic', matchTarget: MATCH_TARGET };
+  const mode = MODES.includes(input && input.mode) ? input.mode : base.mode;
+  let target = Math.floor(Number(input && input.target));
+  if (!Number.isFinite(target)) {
+    // No (valid) target given: keep the current one, unless the mode just
+    // changed - then fall back to that mode's sensible default.
+    target = mode === base.mode ? base.matchTarget : DEFAULT_TARGETS[mode];
+  }
+  target = Math.min(MAX_TARGET, Math.max(MIN_TARGET, target));
+  return { mode, matchTarget: target };
+}
+
+function createRoom(name, options) {
   const code = makeRoomCode();
+  const settings = normalizeSettings(options || {}, null);
   const room = {
     code,
     createdAt: Date.now(),
@@ -87,35 +114,57 @@ function createRoom(name) {
     players: [],
     scores: {},
     startingPlayerId: null,
-    phase: 'waiting', // waiting -> playing -> hand_over -> playing -> ... -> match_over
+    // waiting (1 player) -> setup (2 players, host picks the game mode) ->
+    // playing -> hand_over -> playing -> ... -> match_over -> setup -> ...
+    phase: 'waiting',
     hand: null,
     log: [],
-    matchTarget: MATCH_TARGET,
+    mode: settings.mode,
+    matchTarget: settings.matchTarget,
     assafPenalty: ASSAF_PENALTY,
+    matchWinnerId: null,
+    matchEndReason: null,
+    h2h: null, // { pair, record, before } once two trackable players are in
   };
   const id = crypto.randomUUID();
   const token = randomToken();
-  room.players.push({ id, token, name: name || 'Player 1', seat: 1, lastSeen: Date.now() });
+  room.players.push({
+    id,
+    token,
+    name: cleanName(name, 'Player 1'),
+    seat: 1,
+    lastSeen: Date.now(),
+    h2hBackup: options && options.h2hBackup,
+  });
   room.scores[id] = 0;
   rooms.set(code, room);
   log(room, `${room.players[0].name} created the room.`);
   return { room, playerId: id, token };
 }
 
-function joinRoom(code, name) {
-  const room = rooms.get(code.toUpperCase());
+function joinRoom(code, name, options) {
+  const room = rooms.get((code || '').toUpperCase());
   if (!room) return { error: 'Room not found.' };
   if (room.players.length >= 2) return { error: 'Room is full.' };
   const id = crypto.randomUUID();
   const token = randomToken();
-  room.players.push({ id, token, name: name || 'Player 2', seat: 2, lastSeen: Date.now() });
+  room.players.push({
+    id,
+    token,
+    name: cleanName(name, 'Player 2'),
+    seat: 2,
+    lastSeen: Date.now(),
+    h2hBackup: options && options.h2hBackup,
+  });
   room.scores[id] = 0;
   log(room, `${room.players[1].name} joined the room.`);
   room.lastActivity = Date.now();
 
   if (room.players.length === 2) {
-    room.startingPlayerId = room.players[crypto.randomInt(2)].id;
-    dealNewHand(room);
+    // Both players are in: move to the setup screen, where the host picks the
+    // game mode and starts the game. (The first hand isn't dealt until then.)
+    room.phase = 'setup';
+    startH2h(room);
   }
   return { room, playerId: id, token };
 }
@@ -129,6 +178,118 @@ function authenticate(code, playerId, token) {
   // this is how we detect disconnects without a persistent connection.
   player.lastSeen = Date.now();
   return { room, player };
+}
+
+// ---------- head-to-head record ----------
+function startH2h(room) {
+  const [p1, p2] = room.players;
+  const pair = h2h.pairFor(p1.name, p2.name);
+  if (!pair) {
+    room.h2h = null; // placeholder/identical names: nothing to track against
+    return;
+  }
+  const record = h2h.cleanRecord(
+    { names: { [h2h.normName(p1.name)]: p1.name, [h2h.normName(p2.name)]: p2.name } },
+    pair.keys
+  );
+  const state = { pair, record, before: null, loaded: false };
+  room.h2h = state;
+  const backups = room.players.map((p) => p.h2hBackup && p.h2hBackup[pair.pairKey]).filter(Boolean);
+  h2h
+    .load(pair, backups)
+    .then((stored) => {
+      state.record = h2h.mergeRecords(state.record, stored, pair.keys);
+      state.loaded = true;
+    })
+    .catch(() => {
+      state.loaded = true;
+    });
+}
+
+function h2hKeyOf(room, playerId) {
+  return h2h.normName(playerById(room, playerId).name);
+}
+
+// Records a finished hand (and, if it ended the match, the match too).
+function recordH2h(room, handWinnerId, matchWinnerId) {
+  const state = room.h2h;
+  if (!state) return;
+  state.before = h2h.cloneRecord(state.record); // what the clients show until the reveal is done
+  const rec = state.record;
+  const hk = h2hKeyOf(room, handWinnerId);
+  rec.hands[hk] = (rec.hands[hk] || 0) + 1;
+  if (matchWinnerId) {
+    const mk = h2hKeyOf(room, matchWinnerId);
+    rec.matches[mk] = (rec.matches[mk] || 0) + 1;
+  }
+  h2h.save(state.pair, rec).then((merged) => {
+    state.record = h2h.mergeRecords(state.record, merged, state.pair.keys);
+  });
+}
+
+function h2hViewFor(room, playerId) {
+  const state = room.h2h;
+  if (!state) return { tracked: false };
+  const pending = room.hand && room.hand.result && state.before; // hide this hand's change until revealed
+  return {
+    tracked: true,
+    pairKey: state.pair.pairKey,
+    current: h2hView(room, playerId, state.record),
+    before: pending ? h2hView(room, playerId, state.before) : null,
+    // Raw record, handed to the browser to keep as a backup copy.
+    sync: state.record,
+  };
+}
+
+function h2hView(room, playerId, record) {
+  const state = room.h2h;
+  if (!state || !record) return null;
+  const me = playerById(room, playerId);
+  const opp = opponentOf(room, playerId);
+  const side = (p) => {
+    const k = h2hKeyOf(room, p.id);
+    return { name: p.name, matches: record.matches[k] || 0, hands: record.hands[k] || 0 };
+  };
+  return { you: side(me), opp: side(opp) };
+}
+
+// ---------- settings + starting ----------
+function isHost(room, player) {
+  return room.players[0] && room.players[0].id === player.id;
+}
+
+function doUpdateSettings(room, player, input) {
+  if (room.phase !== 'waiting' && room.phase !== 'setup') return { error: 'Game settings can only be changed before a game starts.' };
+  if (!isHost(room, player)) return { error: 'Only the host can change the game settings.' };
+  const next = normalizeSettings(input || {}, { mode: room.mode, matchTarget: room.matchTarget });
+  room.mode = next.mode;
+  room.matchTarget = next.matchTarget;
+  room.lastActivity = Date.now();
+  return { room };
+}
+
+function doStartGame(room, player) {
+  if (room.phase !== 'setup') return { error: 'The game is not ready to start.' };
+  if (!isHost(room, player)) return { error: 'Only the host can start the game.' };
+  if (room.players.length < 2) return { error: 'Waiting for the other player to join.' };
+  for (const p of room.players) room.scores[p.id] = 0;
+  room.matchWinnerId = null;
+  room.matchEndReason = null;
+  if (!room.startingPlayerId) {
+    room.startingPlayerId = room.players[crypto.randomInt(2)].id;
+  }
+  // dealNewHand alternates the starting player itself whenever a previous
+  // hand exists, so alternation carries across matches too.
+  dealNewHand(room);
+  room.lastActivity = Date.now();
+  log(room, `Game started: ${modeLabel(room)}.`);
+  return { room };
+}
+
+function modeLabel(room) {
+  return room.mode === 'exact'
+    ? `Exact Target - land on exactly ${room.matchTarget} to win, go over and you lose`
+    : `Classic - first to reach ${room.matchTarget} loses`;
 }
 
 function reshuffleIfNeeded(room) {
@@ -177,6 +338,26 @@ function doDiscard(room, player, { cardIds }) {
   hand.turnPhase = 'await_draw';
   room.lastActivity = Date.now();
   log(room, `${player.name} discarded ${cards.length} card(s).`);
+  return { room };
+}
+
+// Undo a discard made by mistake. Only possible during the discarder's own
+// turn, before they've drawn: the moment they pick up from either pile the
+// discard is committed. The discarded cards stay visible to the opponent the
+// whole time (see viewFor's pendingDiscard), so nothing is hidden or sneaky.
+function doTakeBack(room, player) {
+  const hand = room.hand;
+  if (room.phase !== 'playing') return { error: 'No hand in progress.' };
+  if (hand.turnPlayerId !== player.id) return { error: 'Not your turn.' };
+  if (hand.turnPhase !== 'await_draw' || hand.pendingDiscard.length === 0) {
+    return { error: 'Nothing to take back.' };
+  }
+  const n = hand.pendingDiscard.length;
+  hand.hands[player.id].push(...hand.pendingDiscard);
+  hand.pendingDiscard = [];
+  hand.turnPhase = 'await_discard';
+  room.lastActivity = Date.now();
+  log(room, `${player.name} took back ${n} card(s).`);
   return { room };
 }
 
@@ -278,14 +459,38 @@ function doCallFaceOff(room, player) {
       (result.callerWins ? `${player.name} wins the hand.` : `${player.name} loses the hand (+${callerDelta} pts).`)
   );
 
-  if (room.scores[player.id] >= room.matchTarget || room.scores[opp.id] >= room.matchTarget) {
+  const handWinner = result.callerWins ? player : opp;
+  const end = evaluateMatchEnd(room);
+  if (end) {
     room.phase = 'match_over';
-    const matchWinner = room.scores[player.id] >= room.matchTarget ? opp : player;
-    room.matchWinnerId = matchWinner.id;
-    log(room, `${matchWinner.name} wins the match!`);
+    room.matchWinnerId = end.winnerId;
+    room.matchEndReason = end.reason;
+    const winner = playerById(room, end.winnerId);
+    if (end.reason === 'exact') log(room, `${winner.name} hit ${room.matchTarget} EXACTLY and wins the match!`);
+    else if (end.reason === 'bust') log(room, `${opponentOf(room, end.winnerId).name} went over ${room.matchTarget} - ${winner.name} wins the match!`);
+    else log(room, `${winner.name} wins the match!`);
   }
+  recordH2h(room, handWinner.id, end ? end.winnerId : null);
 
   return { room };
+}
+
+// Decides whether the match is over after a hand. Only the player whose score
+// just changed can end it.
+//   classic: reaching the target loses.
+//   exact:   landing on the target exactly wins; going past it loses.
+function evaluateMatchEnd(room) {
+  for (const p of room.players) {
+    const score = room.scores[p.id];
+    const other = opponentOf(room, p.id);
+    if (room.mode === 'exact') {
+      if (score === room.matchTarget) return { winnerId: p.id, reason: 'exact' };
+      if (score > room.matchTarget) return { winnerId: other.id, reason: 'bust' };
+    } else if (score >= room.matchTarget) {
+      return { winnerId: other.id, reason: 'target' };
+    }
+  }
+  return null;
 }
 
 function doNextHand(room, player) {
@@ -295,15 +500,16 @@ function doNextHand(room, player) {
   return { room };
 }
 
+// A finished match goes back to the setup screen, so the host can keep the
+// same game mode or pick a different one before the next match is dealt.
 function doNewMatch(room, player) {
   if (room.phase !== 'match_over') return { error: 'Match is not finished.' };
   for (const p of room.players) room.scores[p.id] = 0;
   room.matchWinnerId = null;
-  // dealNewHand alternates the starting player itself - this keeps the
-  // alternation going continuously across the match boundary too.
-  dealNewHand(room);
+  room.matchEndReason = null;
+  room.phase = 'setup';
   room.lastActivity = Date.now();
-  log(room, 'New match started.');
+  log(room, 'Back to game setup.');
   return { room };
 }
 
@@ -322,13 +528,19 @@ function viewFor(room, playerId) {
     })),
     you: playerId,
     scores: room.scores,
+    mode: room.mode,
     matchTarget: room.matchTarget,
     assafPenalty: room.assafPenalty,
+    isHost: isHost(room, me),
     matchWinnerId: room.matchWinnerId || null,
+    matchEndReason: room.matchEndReason || null,
+    h2h: h2hViewFor(room, playerId),
     log: room.log.slice(-25),
   };
 
-  if (!room.hand) {
+  // No hand is shown on the waiting/setup screens (a finished match's old
+  // hand would otherwise linger there).
+  if (!room.hand || room.phase === 'waiting' || room.phase === 'setup') {
     return { ...base, hand: null };
   }
 
@@ -344,6 +556,11 @@ function viewFor(room, playerId) {
       canCallFaceOff: h.turnPlayerId === playerId && h.turnPhase === 'await_discard' && gl.canCallFaceOff(myHand),
       opponentCardCount: oppHand.length,
       discardPile: h.discardPile,
+      // This turn's discard, staged until the discarder draws. Visible to BOTH
+      // players straight away; only the discarder can take it back, and only
+      // until they pick up from a pile.
+      pendingDiscard: h.pendingDiscard,
+      canTakeBack: h.turnPlayerId === playerId && h.turnPhase === 'await_draw' && h.pendingDiscard.length > 0,
       drawPileCount: h.drawPile.length,
       turnPlayerId: h.turnPlayerId,
       turnPhase: h.turnPhase,
@@ -387,8 +604,15 @@ module.exports = {
   doDraw,
   doDiscard,
   doCallFaceOff,
+  doTakeBack,
+  doUpdateSettings,
+  doStartGame,
   doNextHand,
   doNewMatch,
   viewFor,
   rooms,
+  MODES,
+  DEFAULT_TARGETS,
+  MIN_TARGET,
+  MAX_TARGET,
 };
