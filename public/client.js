@@ -490,17 +490,24 @@
     return h.current;
   }
 
+  // Subtle head-to-head tally tucked under each player's name: matches won
+  // against each other (hands won is in the tooltip).
   function renderH2hBadge(view) {
-    const badge = $('h2h-badge');
     const rec = h2hShown(view);
+    const mine = $('my-h2h');
+    const theirs = $('opp-h2h');
     if (!rec) {
-      badge.classList.add('hidden');
+      mine.classList.add('hidden');
+      theirs.classList.add('hidden');
       return;
     }
-    badge.classList.remove('hidden');
-    badge.innerHTML =
-      `H2H &nbsp;${escapeHtml(rec.you.name)} <b>${rec.you.matches}</b> &ndash; <b>${rec.opp.matches}</b> ${escapeHtml(rec.opp.name)}` +
-      `<span class="h2h-sub">hands ${rec.you.hands}&ndash;${rec.opp.hands}</span>`;
+    const fill = (el, side) => {
+      el.classList.remove('hidden');
+      el.textContent = `H2H ${side.matches}`;
+      el.title = `Head-to-head vs ${side === rec.you ? rec.opp.name : rec.you.name}: ${side.matches} match${side.matches === 1 ? '' : 'es'} won, ${side.hands} hand${side.hands === 1 ? '' : 's'} won`;
+    };
+    fill(mine, rec.you);
+    fill(theirs, rec.opp);
   }
 
   function escapeHtml(str) {
@@ -666,10 +673,7 @@
     const oppBox = $('opp-score-box');
     if (view.phase === 'playing') {
       if (hand.isMyTurn) {
-        ti.textContent =
-          hand.turnPhase === 'await_discard'
-            ? '▶ YOUR TURN — discard or call Face Off'
-            : '▶ YOUR TURN — draw a card (or take back your discard)';
+        ti.textContent = '▶ YOUR TURN';
         ti.classList.remove('waiting');
         ti.classList.add('mine');
         if (myBox) myBox.classList.add('active-turn');
@@ -706,7 +710,6 @@
       }
       discardEl.appendChild(el);
     });
-    $('discard-label').textContent = canDraw && hand.discardPile.length ? 'Discard pile — tap one to take' : 'Discard pile';
 
     // This turn's discard, shown to BOTH players the instant it's played. The
     // discarder can still take it back until they draw.
@@ -717,8 +720,6 @@
     if (view.phase === 'playing' && pending.length > 0) {
       pendingBlock.classList.remove('hidden');
       pending.forEach((card) => pendingEl.appendChild(cardFaceEl(card, { clickable: false })));
-      const whose = hand.isMyTurn ? 'You' : turnPlayerName(view);
-      $('pending-label').textContent = `${whose} just discarded`;
       const tb = $('btn-takeback');
       tb.classList.toggle('hidden', !hand.canTakeBack);
       tb.onclick = hand.canTakeBack ? () => doAction(() => sendAction('takeBack')) : null;
@@ -767,8 +768,8 @@
     $('btn-faceoff').disabled = !(view.phase === 'playing' && hand.canCallFaceOff);
     $('btn-faceoff').onclick = () => doAction(() => sendAction('callFaceOff'));
 
-    $('btn-sort').textContent = `Auto-arrange: ${state.autoSort ? 'On' : 'Off'}`;
     $('btn-sort').classList.toggle('active', state.autoSort);
+    $('btn-sort').setAttribute('aria-pressed', state.autoSort ? 'true' : 'false');
     $('btn-sort').onclick = () => {
       if (state.autoSort) {
         // Turning it off keeps the cards exactly where they are on screen.

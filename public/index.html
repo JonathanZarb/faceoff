@@ -75,6 +75,7 @@
     <header class="game-header">
       <div class="score-box" id="opp-score-box">
         <div class="score-name" id="opp-name">Opponent</div>
+        <div class="score-h2h hidden" id="opp-h2h"></div>
         <div class="score-value" id="opp-score">0</div>
         <div class="conn-status" id="opp-conn-status">Disconnected</div>
       </div>
@@ -85,11 +86,10 @@
       </div>
       <div class="score-box" id="my-score-box">
         <div class="score-name" id="my-name">You</div>
+        <div class="score-h2h hidden" id="my-h2h"></div>
         <div class="score-value" id="my-score">0</div>
       </div>
     </header>
-
-    <div class="h2h-badge hidden" id="h2h-badge"></div>
 
     <div class="turn-banner" id="turn-banner">
       <div class="turn-indicator" id="turn-indicator"></div>
@@ -101,23 +101,22 @@
 
     <div class="table-row">
       <div class="pile-block">
-        <div class="pile-label">Draw pile</div>
         <div id="draw-pile" class="card card-back" title="Draw a card"></div>
       </div>
       <div class="pile-block">
-        <div class="pile-label" id="discard-label">Discard pile</div>
         <div id="discard-pile" class="discard-group"></div>
       </div>
       <div class="pile-block pending-block hidden" id="pending-block">
-        <div class="pile-label" id="pending-label">Just discarded</div>
         <div id="pending-discard" class="discard-group"></div>
         <button id="btn-takeback" type="button" class="takeback hidden">&#8617; Take back</button>
       </div>
     </div>
 
     <div class="hand-header">
-      <span class="hand-header-label">Your hand <span class="drag-hint">&middot; drag cards to arrange</span></span>
-      <button id="btn-sort" class="sort-toggle" type="button">Auto-arrange: Off</button>
+      <button id="btn-sort" class="sort-toggle" type="button" title="Auto-arrange" aria-label="Auto-arrange" aria-pressed="false">
+        <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true"><path d="M5 2v11M5 13l-2.5-2.5M5 13l2.5-2.5M11 14V3M11 3L8.5 5.5M11 3l2.5 2.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <span>Auto</span>
+      </button>
     </div>
 
     <div class="hand-row" id="my-hand"></div>

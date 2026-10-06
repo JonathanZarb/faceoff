@@ -340,30 +340,31 @@ button:not(.primary):not(.danger):hover:not(:disabled) { background: rgba(255,25
 .hand-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   border-top: 1px solid rgba(255,255,255,0.12);
-  padding-top: 14px;
+  padding-top: 10px;
   margin-top: 4px;
 }
-.hand-header-label {
-  font-size: 0.72rem;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: rgba(247,243,234,0.65);
-}
 .sort-toggle {
-  background: rgba(255,255,255,0.1);
-  color: rgba(247,243,234,0.85);
-  border-radius: 20px;
-  padding: 5px 14px;
-  font-size: 0.75rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: transparent;
+  color: rgba(247,243,234,0.55);
+  border: 1px solid rgba(255,255,255,0.16);
+  border-radius: 14px;
+  padding: 3px 10px;
+  font-size: 0.7rem;
   font-weight: 600;
+  letter-spacing: 0.04em;
+  line-height: 1.4;
 }
-.sort-toggle:hover { background: rgba(255,255,255,0.18); }
+.sort-toggle svg { display: block; }
+.sort-toggle:hover { color: var(--cream); border-color: rgba(255,255,255,0.35); background: rgba(255,255,255,0.06); }
 .sort-toggle.active {
-  background: rgba(212,175,55,0.22);
   color: var(--gold);
-  border: 1px solid var(--gold);
+  border-color: rgba(212,175,55,0.7);
+  background: rgba(212,175,55,0.12);
 }
 
 .hand-row {
@@ -406,7 +407,7 @@ button:not(.primary):not(.danger):hover:not(:disabled) { background: rgba(255,25
 }
 body.dragging-cards { cursor: grabbing; user-select: none; -webkit-user-select: none; }
 .hand-row .card.clickable { cursor: grab; }
-.drag-hint { text-transform: none; letter-spacing: 0; opacity: 0.7; }
+
 
 .overlay {
   position: fixed;
@@ -658,13 +659,6 @@ body.dragging-cards { cursor: grabbing; user-select: none; -webkit-user-select: 
 
 
 /* ---------- PILE LABELS + TAKE BACK ---------- */
-.pile-label {
-  font-size: 0.66rem;
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
-  color: rgba(247,243,234,0.6);
-  margin-bottom: 6px;
-}
 .pending-block {
   padding: 8px 12px 10px;
   border-radius: 12px;
@@ -672,8 +666,7 @@ body.dragging-cards { cursor: grabbing; user-select: none; -webkit-user-select: 
   background: rgba(212,175,55,0.08);
   animation: pending-in 0.25s ease;
 }
-.pending-block .pile-label { color: var(--gold); }
-.pending-block .card { opacity: 1; }
+.pending-block .pending-block .card { opacity: 1; }
 @keyframes pending-in {
   0% { transform: translateY(-8px) scale(0.96); opacity: 0; }
   100% { transform: none; opacity: 1; }
@@ -689,20 +682,14 @@ body.dragging-cards { cursor: grabbing; user-select: none; -webkit-user-select: 
 .takeback:hover:not(:disabled) { background: rgba(212,175,55,0.3); }
 
 /* ---------- H2H ---------- */
-.h2h-badge {
-  margin: 2px auto 8px;
-  width: fit-content;
-  max-width: 100%;
-  padding: 5px 16px;
-  border-radius: 20px;
-  font-size: 0.8rem;
-  color: rgba(247,243,234,0.85);
-  background: rgba(255,255,255,0.07);
-  border: 1px solid rgba(255,255,255,0.14);
-  text-align: center;
+.score-h2h {
+  font-size: 0.6rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(247,243,234,0.38);
+  margin-top: 1px;
+  cursor: default;
 }
-.h2h-badge b { color: var(--gold); font-size: 0.95rem; }
-.h2h-badge .h2h-sub { opacity: 0.65; font-size: 0.72rem; margin-left: 6px; }
 .h2h-lobby {
   margin: 16px auto 0;
   max-width: 360px;
