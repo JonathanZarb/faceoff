@@ -39,7 +39,9 @@ async function main() {
   }
 
   async function playOneMatch(matchIdx) {
-    const created = await post('/api/rooms', { name: 'BotA' });
+    // Alternate game modes so both end conditions get exercised.
+    const exact = matchIdx % 2 === 1;
+    const created = await post('/api/rooms', { name: 'BotA', mode: exact ? 'exact' : 'classic', target: exact ? 40 : 60 });
     const code = created.code;
     const joined = await post(`/api/rooms/${code}/join`, { name: 'BotB' });
     const players = {
@@ -60,6 +62,8 @@ async function main() {
       });
     }
 
+    await action('a', 'startGame'); // host starts from the setup screen
+
     let turns = 0;
     const MAX_TURNS = 5000;
 
@@ -67,7 +71,10 @@ async function main() {
       turns += 1;
       const sA = await stateFor('a');
       if (sA.phase === 'match_over') {
-        return { turns, winner: sA.matchWinnerId === players.a.id ? 'a' : 'b', scores: sA.scores };
+        assert.ok(sA.matchEndReason, 'match_over must carry a reason');
+        if (exact) assert.ok(['exact', 'bust'].includes(sA.matchEndReason));
+        else assert.equal(sA.matchEndReason, 'target');
+        return { turns, winner: sA.matchWinnerId === players.a.id ? 'a' : 'b', scores: sA.scores, reason: sA.matchEndReason };
       }
       if (sA.phase === 'hand_over') {
         // either player can advance
@@ -110,6 +117,13 @@ async function main() {
           cardIds = [pick(hand).id];
         }
         await action(activeWho, 'discard', { cardIds });
+        if (Math.random() < 0.15) {
+          // Changed their mind: take it back, then discard again.
+          const back = await action(activeWho, 'takeBack');
+          assert.equal(back.state.hand.turnPhase, 'await_discard');
+          assert.equal(back.state.hand.pendingDiscard.length, 0);
+          await action(activeWho, 'discard', { cardIds });
+        }
       }
     }
     throw new Error(`Match ${matchIdx} did not finish within ${MAX_TURNS} turns (possible stall)`);
@@ -118,7 +132,7 @@ async function main() {
   const numMatches = parseInt(process.argv[2] || '5', 10);
   for (let i = 0; i < numMatches; i++) {
     const result = await playOneMatch(i);
-    console.log(`  match ${i + 1}: winner=${result.winner} turns=${result.turns} scores=${JSON.stringify(result.scores)}`);
+    console.log(`  match ${i + 1}: winner=${result.winner} turns=${result.turns} scores=${JSON.stringify(result.scores)} reason=${result.reason}`);
     assert.ok(result.winner === 'a' || result.winner === 'b');
   }
 

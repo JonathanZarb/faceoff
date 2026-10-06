@@ -44,10 +44,28 @@ async function main() {
   assert.equal(created.state.phase, 'waiting');
 
   const joined = await post(`/api/rooms/${code}/join`, { name: 'Bob' });
-  assert.equal(joined.state.phase, 'playing');
+  assert.equal(joined.state.phase, 'setup'); // both in: host picks a mode on the setup screen
   console.log('  room created + joined:', code);
 
   const players = { alice: { id: created.playerId, token: created.token }, bob: { id: joined.playerId, token: joined.token } };
+
+  // Setup screen: only the host may change settings / start.
+  await assert.rejects(
+    post(`/api/rooms/${code}/action`, { playerId: joined.playerId, token: joined.token, type: 'startGame' }),
+    /Only the host/
+  );
+  let started = await post(`/api/rooms/${code}/action`, {
+    playerId: created.playerId,
+    token: created.token,
+    type: 'updateSettings',
+    mode: 'exact',
+    target: 42,
+  });
+  assert.equal(started.state.mode, 'exact');
+  assert.equal(started.state.matchTarget, 42);
+  started = await post(`/api/rooms/${code}/action`, { playerId: created.playerId, token: created.token, type: 'startGame' });
+  assert.equal(started.state.phase, 'playing');
+  console.log('  host chose Exact Target 42 and started the game');
 
   async function stateFor(who) {
     const q = new URLSearchParams({ playerId: players[who].id, token: players[who].token });
