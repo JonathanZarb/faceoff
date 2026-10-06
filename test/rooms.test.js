@@ -512,7 +512,7 @@ test('classic mode: reaching the target loses, with reason "target"', () => {
   assert.equal(room.matchEndReason, 'target');
 });
 
-test('doTakeBack: returns the discard to the hand, in the opponent-visible window only', () => {
+test('doTakeBack: returns the discard to the hand; the opponent is never shown the staged cards', () => {
   const { room, p1, p2, host, guest } = freshRoom();
   rooms.doStartGame(room, host);
   const turn = room.hand.turnPlayerId;
@@ -525,10 +525,12 @@ test('doTakeBack: returns the discard to the hand, in the opponent-visible windo
   assert.match(rooms.doTakeBack(room, player).error, /Nothing to take back/);
 
   assert.equal(rooms.doDiscard(room, player, { cardIds: [c1.id] }).error, undefined);
-  // The opponent can already see what was discarded...
+  // The opponent is shown nothing about the staged discard (not even its cards)...
   const oppView = rooms.viewFor(room, other.id).hand;
-  assert.deepEqual(oppView.pendingDiscard.map((c) => c.id), [c1.id]);
+  assert.deepEqual(oppView.pendingDiscard, []);
+  assert.equal(JSON.stringify(rooms.viewFor(room, other.id)).includes(JSON.stringify(c1.id)), false);
   assert.equal(oppView.canTakeBack, false);
+  assert.deepEqual(oppView.discardPile.map((c) => c.id).includes(c1.id), false);
   // ...and only the discarder may take it back
   assert.match(rooms.doTakeBack(room, other).error, /Not your turn/);
   const myView = rooms.viewFor(room, turn).hand;
