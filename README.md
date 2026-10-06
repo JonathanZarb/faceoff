@@ -32,7 +32,7 @@ Picked by the host on the setup screen before the match starts (and again before
 
 ### Other features
 
-- **Take back a discard** — if you discard by mistake, a *Take back* button sits next to your discard until you pick up from either pile. Your opponent can see the discarded cards the whole time.
+- **Take back a discard** — if you discard by mistake, a *Take back* button appears above your hand until you pick up from either pile. Nobody is shown the discarded cards until you draw and the turn ends.
 - **Arrange your hand** — drag cards left/right to put them in any order (works with mouse and touch; Shift+←/→ moves a focused card). *Auto-arrange* sorts them for you.
 - **Head-to-head record** — each pair of player names keeps a running total of matches and hands won against each other (see *Head-to-head storage* below). Scores and H2H only update once the hand's winner has been revealed.
 

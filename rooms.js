@@ -343,8 +343,8 @@ function doDiscard(room, player, { cardIds }) {
 
 // Undo a discard made by mistake. Only possible during the discarder's own
 // turn, before they've drawn: the moment they pick up from either pile the
-// discard is committed. The discarded cards stay visible to the opponent the
-// whole time (see viewFor's pendingDiscard), so nothing is hidden or sneaky.
+// discard is committed. Until then the discarded cards are shown to nobody
+// (see viewFor) - they only become the public discard pile once the turn ends.
 function doTakeBack(room, player) {
   const hand = room.hand;
   if (room.phase !== 'playing') return { error: 'No hand in progress.' };
@@ -556,10 +556,12 @@ function viewFor(room, playerId) {
       canCallFaceOff: h.turnPlayerId === playerId && h.turnPhase === 'await_discard' && gl.canCallFaceOff(myHand),
       opponentCardCount: oppHand.length,
       discardPile: h.discardPile,
-      // This turn's discard, staged until the discarder draws. Visible to BOTH
-      // players straight away; only the discarder can take it back, and only
-      // until they pick up from a pile.
-      pendingDiscard: h.pendingDiscard,
+      // This turn's discard, staged until the discarder draws. Never shown to
+      // the opponent (and the client doesn't render it for the discarder
+      // either - it only uses these ids to put a taken-back card back in its
+      // old slot). Only the discarder can take it back, and only until they
+      // pick up from a pile.
+      pendingDiscard: h.turnPlayerId === playerId ? h.pendingDiscard : [],
       canTakeBack: h.turnPlayerId === playerId && h.turnPhase === 'await_draw' && h.pendingDiscard.length > 0,
       drawPileCount: h.drawPile.length,
       turnPlayerId: h.turnPlayerId,
