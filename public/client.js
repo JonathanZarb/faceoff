@@ -23,6 +23,13 @@
     lastSeenDrawAt: undefined, // dedupe key for the draw-pickup/opponent-draw-toast triggers
     pickupHideTimer: null,
     drawToastHideTimer: null,
+    order: [], // the player's own left-to-right card arrangement (card ids)
+    dragging: false, // a card is being dragged - hold off re-rendering the hand
+    pendingView: null, // latest server view that arrived mid-drag
+    suppressClick: false,
+    shownScores: null, // what the scoreboard currently displays (see displayedScores)
+    celebrationKey: null, // which match's exact-hit celebration has already played
+    celebrateTimer: null,
   };
 
   function sleep(ms) {
@@ -69,6 +76,25 @@
     }
   }
 
+  // Browser-held backup copy of head-to-head records (pairKey -> record). Sent
+  // to the server when joining a room, so a server that forgot them (free
+  // hosting restarts) gets them back.
+  function loadH2hBackup() {
+    try {
+      const raw = JSON.parse(localStorage.getItem('faceoff_h2h') || '{}');
+      return raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+    } catch (e) {
+      return {};
+    }
+  }
+  function saveH2hBackup(all) {
+    try {
+      localStorage.setItem('faceoff_h2h', JSON.stringify(all));
+    } catch (e) {
+      /* ignore */
+    }
+  }
+
   // ---------- API ----------
   async function api(path, opts) {
     const res = await fetch(path, opts);
@@ -81,7 +107,7 @@
     return api('/api/rooms', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name }),
+      body: JSON.stringify({ name, h2hBackup: loadH2hBackup() }),
     });
   }
 
@@ -89,7 +115,7 @@
     return api(`/api/rooms/${encodeURIComponent(code)}/join`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name }),
+      body: JSON.stringify({ name, h2hBackup: loadH2hBackup() }),
     });
   }
 
@@ -396,7 +422,7 @@
     const el = $('draw-toast');
     const name = ld.playerName || 'Opponent';
     if (ld.source === 'discard' && ld.card) {
-      el.innerHTML = `${name} picked up from the discard pile: ${cardMiniHtml(ld.card)}`;
+      el.innerHTML = `${escapeHtml(name)} picked up from the discard pile: ${cardMiniHtml(ld.card)}`;
     } else {
       el.textContent = `${name} drew from the draw pile`;
     }
@@ -410,20 +436,205 @@
   // ---------- render ----------
   let currentState = null;
 
+  // Scores as they should be SHOWN right now. While a Face Off result is
+  // waiting to be revealed (countdown still running, or the reveal not yet on
+  // screen) this hand's points are held back, so the scoreboard behind the
+  // overlays can't give away who won before the reveal does.
+  function displayedScores(view) {
+    const scores = Object.assign({}, view.scores);
+    const result = view.hand && view.hand.result;
+    if (result && !state.revealSequenceDone) {
+      scores[result.callerId] = (scores[result.callerId] || 0) - (result.callerDelta || 0);
+      scores[result.opponentId] = (scores[result.opponentId] || 0) - (result.opponentDelta || 0);
+    }
+    return scores;
+  }
+
+  function renderScores(view) {
+    const opp = view.players.find((p) => p.id !== view.you);
+    const shown = displayedScores(view);
+    const mine = shown[view.you] || 0;
+    const theirs = opp ? shown[opp.id] || 0 : 0;
+    $('my-score').textContent = mine;
+    $('opp-score').textContent = theirs;
+
+    const prev = state.shownScores;
+    if (prev) {
+      if (mine !== prev.mine) bump($('my-score-box'));
+      if (theirs !== prev.theirs) bump($('opp-score-box'));
+    }
+    state.shownScores = { mine, theirs };
+  }
+
+  function bump(box) {
+    if (!box) return;
+    box.classList.remove('score-bump');
+    void box.offsetWidth;
+    box.classList.add('score-bump');
+  }
+
+  function renderModeHeader(view) {
+    const exact = view.mode === 'exact';
+    $('mt-label-1').textContent = exact ? 'Hit exactly' : 'First to';
+    $('match-target-val').textContent = view.matchTarget;
+    $('mt-label-2').textContent = exact ? 'to win · over loses' : 'loses';
+  }
+
+  // ---------- head-to-head ----------
+  // The record shown is the "before" snapshot until this hand's result has
+  // been revealed, so the H2H can't spoil the winner either.
+  function h2hShown(view) {
+    const h = view.h2h;
+    if (!h || !h.tracked) return null;
+    if (view.hand && view.hand.result && !state.revealSequenceDone && h.before) return h.before;
+    return h.current;
+  }
+
+  function renderH2hBadge(view) {
+    const badge = $('h2h-badge');
+    const rec = h2hShown(view);
+    if (!rec) {
+      badge.classList.add('hidden');
+      return;
+    }
+    badge.classList.remove('hidden');
+    badge.innerHTML =
+      `H2H &nbsp;${escapeHtml(rec.you.name)} <b>${rec.you.matches}</b> &ndash; <b>${rec.opp.matches}</b> ${escapeHtml(rec.opp.name)}` +
+      `<span class="h2h-sub">hands ${rec.you.hands}&ndash;${rec.opp.hands}</span>`;
+  }
+
+  function escapeHtml(str) {
+    return String(str).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
+
+  // Keep a browser-side backup copy of each pair's record, so it can be
+  // restored on the server if the server ever forgets it.
+  function syncH2hBackup(view) {
+    const h = view.h2h;
+    if (!h || !h.tracked || !h.sync) return;
+    const all = loadH2hBackup();
+    const prev = all[h.pairKey];
+    const merged = { names: Object.assign({}, prev && prev.names, h.sync.names), matches: {}, hands: {} };
+    ['matches', 'hands'].forEach((field) => {
+      const keys = new Set([...Object.keys((prev && prev[field]) || {}), ...Object.keys(h.sync[field] || {})]);
+      keys.forEach((k) => {
+        merged[field][k] = Math.max((prev && prev[field] && prev[field][k]) || 0, h.sync[field][k] || 0);
+      });
+    });
+    if (JSON.stringify(prev) !== JSON.stringify(merged)) {
+      all[h.pairKey] = merged;
+      saveH2hBackup(all);
+    }
+  }
+
+  // ---------- lobby / game setup ----------
+  const TARGET_PRESETS = { classic: [50, 100, 150, 200], exact: [30, 50, 75, 100] };
+
+  function modeSummary(mode, target) {
+    return mode === 'exact'
+      ? `Land on exactly <b>${target}</b> points to win the match. Go past ${target} and you lose.`
+      : `The first player to reach <b>${target}</b> points loses the match.`;
+  }
+
+  function renderLobby(view) {
+    const opp = view.players.find((p) => p.id !== view.you);
+    const host = view.players.find((p) => p.seat === 1);
+    const ready = view.phase === 'setup';
+    const editable = view.isHost;
+
+    $('lobby-title').textContent = !ready ? 'Waiting for your friend…' : editable ? 'Choose a game mode' : `${host ? host.name : 'The host'} is choosing the game mode…`;
+    $('room-code-display').textContent = view.code;
+    // Once both players are in, the code is just a small reminder.
+    $('lobby-code-block').classList.toggle('hidden', ready);
+
+    const panel = $('settings-panel');
+    panel.classList.toggle('readonly', !editable);
+    $('mode-cards').classList.toggle('readonly', !editable);
+    document.querySelectorAll('.mode-card').forEach((btn) => {
+      btn.classList.toggle('selected', btn.dataset.mode === view.mode);
+      btn.onclick = editable ? () => doAction(() => sendAction('updateSettings', { mode: btn.dataset.mode })) : null;
+    });
+
+    const input = $('target-input');
+    if (document.activeElement !== input) input.value = view.matchTarget;
+    input.disabled = !editable;
+    input.onchange = () => {
+      const v = parseInt(input.value, 10);
+      if (Number.isFinite(v)) doAction(() => sendAction('updateSettings', { mode: view.mode, target: v }));
+    };
+
+    const presets = $('target-presets');
+    presets.innerHTML = '';
+    (TARGET_PRESETS[view.mode] || []).forEach((t) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.textContent = String(t);
+      b.classList.toggle('active', t === view.matchTarget);
+      if (editable) b.onclick = () => doAction(() => sendAction('updateSettings', { mode: view.mode, target: t }));
+      presets.appendChild(b);
+    });
+
+    $('mode-summary').innerHTML = modeSummary(view.mode, view.matchTarget);
+    $('settings-note').textContent = editable ? '' : 'Only the host can change the game mode.';
+
+    const h = h2hShown(view);
+    const lobbyH2h = $('lobby-h2h');
+    if (ready && h) {
+      lobbyH2h.classList.remove('hidden');
+      lobbyH2h.innerHTML =
+        `<div class="h2h-sub">Head-to-head record</div>` +
+        `<div class="h2h-score">${escapeHtml(h.you.name)} ${h.you.matches} &ndash; ${h.opp.matches} ${escapeHtml(h.opp.name)}</div>` +
+        `<div class="h2h-sub">matches won &middot; hands won ${h.you.hands}&ndash;${h.opp.hands}</div>`;
+    } else if (ready) {
+      lobbyH2h.classList.remove('hidden');
+      lobbyH2h.innerHTML = `<div class="h2h-sub">Head-to-head isn't tracked for this pairing &mdash; both players need their own distinct name (set on the home screen).</div>`;
+    } else {
+      lobbyH2h.classList.add('hidden');
+    }
+
+    const start = $('btn-start-game');
+    start.classList.toggle('hidden', !editable);
+    start.disabled = !(editable && ready);
+    start.onclick = () => doAction(() => sendAction('startGame'));
+    $('start-hint').textContent = !ready
+      ? editable
+        ? 'You can pick the game mode now — Start unlocks when your friend joins.'
+        : ''
+      : editable
+        ? `${opp ? opp.name : 'Your friend'} is in. Start when you're ready.`
+        : `Waiting for ${host ? host.name : 'the host'} to start the game…`;
+  }
+
+  function resetRoundUi() {
+    state.revealSequenceActive = false;
+    state.revealSequenceDone = false;
+    state.shownScores = null;
+    state.celebrationKey = null;
+    $('overlay-countdown').classList.add('hidden');
+    $('overlay-reveal').classList.add('hidden');
+    stopCelebration();
+    $('overlay-celebrate').classList.add('hidden');
+  }
+
   function render(view) {
+    // Don't rebuild the hand out from under a card the player is mid-drag on.
+    if (state.dragging) {
+      state.pendingView = view;
+      return;
+    }
     currentState = view;
+    syncH2hBackup(view);
     const me = view.players.find((p) => p.id === view.you);
     const opp = view.players.find((p) => p.id !== view.you);
 
     $('my-name').textContent = me ? me.name : 'You';
     $('opp-name').textContent = opp ? opp.name : 'Opponent';
-    $('my-score').textContent = view.scores[view.you] || 0;
-    $('opp-score').textContent = opp ? view.scores[opp.id] || 0 : 0;
-    $('match-target-val').textContent = view.matchTarget;
+    renderModeHeader(view);
     updateOpponentConnection(opp);
 
-    if (view.phase === 'waiting') {
-      $('room-code-display').textContent = view.code;
+    if (view.phase === 'waiting' || view.phase === 'setup') {
+      resetRoundUi();
+      renderLobby(view);
       showScreen('screen-waiting');
       startLobbyMusic();
       return;
@@ -434,6 +645,8 @@
     const hand = view.hand;
     if (!hand) return;
 
+    renderScores(view);
+    renderH2hBadge(view);
     handleDrawReveal(view, hand);
 
     // opponent card backs
@@ -454,7 +667,9 @@
     if (view.phase === 'playing') {
       if (hand.isMyTurn) {
         ti.textContent =
-          hand.turnPhase === 'await_discard' ? '▶ YOUR TURN — discard or call Face Off' : '▶ YOUR TURN — draw a card';
+          hand.turnPhase === 'await_discard'
+            ? '▶ YOUR TURN — discard or call Face Off'
+            : '▶ YOUR TURN — draw a card (or take back your discard)';
         ti.classList.remove('waiting');
         ti.classList.add('mine');
         if (myBox) myBox.classList.add('active-turn');
@@ -491,6 +706,26 @@
       }
       discardEl.appendChild(el);
     });
+    $('discard-label').textContent = canDraw && hand.discardPile.length ? 'Discard pile — tap one to take' : 'Discard pile';
+
+    // This turn's discard, shown to BOTH players the instant it's played. The
+    // discarder can still take it back until they draw.
+    const pendingBlock = $('pending-block');
+    const pendingEl = $('pending-discard');
+    pendingEl.innerHTML = '';
+    const pending = hand.pendingDiscard || [];
+    if (view.phase === 'playing' && pending.length > 0) {
+      pendingBlock.classList.remove('hidden');
+      pending.forEach((card) => pendingEl.appendChild(cardFaceEl(card, { clickable: false })));
+      const whose = hand.isMyTurn ? 'You' : turnPlayerName(view);
+      $('pending-label').textContent = `${whose} just discarded`;
+      const tb = $('btn-takeback');
+      tb.classList.toggle('hidden', !hand.canTakeBack);
+      tb.onclick = hand.canTakeBack ? () => doAction(() => sendAction('takeBack')) : null;
+    } else {
+      pendingBlock.classList.add('hidden');
+      $('btn-takeback').classList.add('hidden');
+    }
 
     // my hand
     const canDiscard = view.phase === 'playing' && hand.isMyTurn && hand.turnPhase === 'await_discard';
@@ -500,17 +735,24 @@
     const presentIds = new Set(hand.myHand.map((c) => c.id));
     for (const id of Array.from(state.selected)) if (!presentIds.has(id)) state.selected.delete(id);
 
-    const displayHand = state.autoSort ? sortedHand(hand.myHand) : hand.myHand;
+    // Cards just discarded keep their slot in my custom order, so a take-back
+    // drops them back exactly where they were.
+    const heldIds = new Set(hand.isMyTurn ? (hand.pendingDiscard || []).map((c) => c.id) : []);
+    const arranged = arrangedHand(hand.myHand, heldIds);
+    const displayHand = state.autoSort ? sortedHand(hand.myHand) : arranged;
     displayHand.forEach((card) => {
       const selected = state.selected.has(card.id);
-      const el = cardFaceEl(card, { clickable: canDiscard, selected });
-      if (canDiscard) {
-        el.onclick = () => {
-          if (state.selected.has(card.id)) state.selected.delete(card.id);
-          else state.selected.add(card.id);
-          render(currentState);
-        };
-      }
+      const el = cardFaceEl(card, { clickable: true, selected });
+      el.classList.remove('unclickable');
+      el.tabIndex = 0;
+      el.onclick = () => {
+        if (state.suppressClick) return;
+        if (!canDiscard) return;
+        if (state.selected.has(card.id)) state.selected.delete(card.id);
+        else state.selected.add(card.id);
+        render(currentState);
+      };
+      attachCardDrag(el, card);
       handEl.appendChild(el);
     });
 
@@ -528,7 +770,12 @@
     $('btn-sort').textContent = `Auto-arrange: ${state.autoSort ? 'On' : 'Off'}`;
     $('btn-sort').classList.toggle('active', state.autoSort);
     $('btn-sort').onclick = () => {
+      if (state.autoSort) {
+        // Turning it off keeps the cards exactly where they are on screen.
+        state.order = sortedHand(currentState.hand.myHand).map((c) => c.id);
+      }
       state.autoSort = !state.autoSort;
+      saveArrangement();
       render(currentState);
     };
 
@@ -541,11 +788,195 @@
     } else {
       // Fresh hand dealt (or no room yet) - reset the sequence so the next
       // Face Off call plays the full countdown again.
-      state.revealSequenceActive = false;
-      state.revealSequenceDone = false;
-      $('overlay-countdown').classList.add('hidden');
-      $('overlay-reveal').classList.add('hidden');
+      resetRoundUi();
     }
+  }
+
+  function turnPlayerName(view) {
+    const p = view.players.find((x) => x.id === view.hand.turnPlayerId);
+    return p ? p.name : 'Opponent';
+  }
+
+  // ---------- custom hand arrangement (drag to reorder) ----------
+  // state.order is the player's own left-to-right ordering of card ids.
+  function arrangedHand(myHand, holdIds) {
+    const byId = new Map(myHand.map((c) => [c.id, c]));
+    const out = [];
+    const seen = new Set();
+    const nextOrder = [];
+    for (const id of state.order) {
+      if (byId.has(id)) {
+        out.push(byId.get(id));
+        seen.add(id);
+        nextOrder.push(id);
+      } else if (holdIds && holdIds.has(id)) {
+        nextOrder.push(id); // away for the moment (just discarded) - hold its slot
+      }
+    }
+    for (const c of myHand) {
+      if (!seen.has(c.id)) {
+        out.push(c); // newly drawn / dealt cards go on the end
+        nextOrder.push(c.id);
+      }
+    }
+    state.order = nextOrder;
+    return out;
+  }
+
+  function saveArrangement() {
+    try {
+      localStorage.setItem(
+        'faceoff_arrange',
+        JSON.stringify({ code: state.code, order: state.order, autoSort: state.autoSort })
+      );
+    } catch (e) {
+      /* best effort */
+    }
+  }
+
+  function loadArrangement(code) {
+    try {
+      const raw = JSON.parse(localStorage.getItem('faceoff_arrange') || 'null');
+      if (raw && raw.code === code) {
+        if (Array.isArray(raw.order)) state.order = raw.order.filter((x) => typeof x === 'string' || typeof x === 'number');
+        state.autoSort = !!raw.autoSort;
+      }
+    } catch (e) {
+      /* ignore */
+    }
+  }
+
+  function moveCard(cardId, targetIndexAmongOthers) {
+    const ids = Array.from($('my-hand').querySelectorAll('.card')).map((el) => el.dataset.id);
+    const without = ids.filter((id) => id !== String(cardId));
+    without.splice(Math.max(0, Math.min(targetIndexAmongOthers, without.length)), 0, String(cardId));
+    // ids in the DOM are strings; map back to the real (possibly numeric) ids
+    const real = new Map(currentState.hand.myHand.map((c) => [String(c.id), c.id]));
+    const reordered = without.map((id) => (real.has(id) ? real.get(id) : id));
+    // keep any held-away ids (just discarded) where they were
+    const held = state.order.filter((id) => !real.has(String(id)));
+    state.order = reordered.concat(held);
+    state.autoSort = false;
+    saveArrangement();
+  }
+
+  function attachCardDrag(el, card) {
+    el.addEventListener('keydown', (e) => {
+      if (!(e.shiftKey || e.altKey)) return;
+      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+      e.preventDefault();
+      const ids = Array.from($('my-hand').querySelectorAll('.card')).map((x) => x.dataset.id);
+      const idx = ids.indexOf(String(card.id));
+      const target = e.key === 'ArrowLeft' ? idx - 1 : idx + 1;
+      if (target < 0 || target >= ids.length) return;
+      if (state.autoSort) state.order = sortedHand(currentState.hand.myHand).map((c) => c.id);
+      moveCard(card.id, target);
+      render(currentState);
+      const again = $('my-hand').querySelector(`.card[data-id="${CSS.escape(String(card.id))}"]`);
+      if (again) again.focus();
+    });
+
+    el.addEventListener('pointerdown', (e) => {
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
+      const startX = e.clientX;
+      const startY = e.clientY;
+      const handEl = $('my-hand');
+      let dragging = false;
+      let ghost = null;
+      let indicator = null;
+      let insertAt = null;
+      let grabDX = 0;
+      let grabDY = 0;
+
+      const others = () => Array.from(handEl.querySelectorAll('.card')).filter((x) => x !== el);
+
+      function updateTarget(px, py) {
+        const list = others();
+        if (!list.length) return;
+        let best = null;
+        let bestDist = Infinity;
+        list.forEach((c, i) => {
+          const r = c.getBoundingClientRect();
+          const cx = r.left + r.width / 2;
+          const cy = r.top + r.height / 2;
+          const d = Math.hypot(px - cx, (py - cy) * 1.4); // rows matter a bit more than columns
+          if (d < bestDist) {
+            bestDist = d;
+            best = { i, r, before: px < cx };
+          }
+        });
+        insertAt = best.before ? best.i : best.i + 1;
+        const hostRect = handEl.getBoundingClientRect();
+        const x = (best.before ? best.r.left : best.r.right) - hostRect.left + (best.before ? -4 : 4);
+        indicator.style.left = `${x - 2}px`;
+        indicator.style.top = `${best.r.top - hostRect.top}px`;
+        indicator.style.height = `${best.r.height}px`;
+      }
+
+      function begin(ev) {
+        dragging = true;
+        state.dragging = true;
+        document.body.classList.add('dragging-cards');
+        const r = el.getBoundingClientRect();
+        grabDX = startX - r.left;
+        grabDY = startY - r.top;
+        ghost = el.cloneNode(true);
+        ghost.classList.add('drag-ghost');
+        ghost.classList.remove('selected', 'drag-origin');
+        ghost.style.width = `${r.width}px`;
+        ghost.style.height = `${r.height}px`;
+        document.body.appendChild(ghost);
+        el.classList.add('drag-origin');
+        indicator = document.createElement('div');
+        indicator.className = 'drop-indicator';
+        handEl.appendChild(indicator);
+        move(ev);
+      }
+
+      function move(ev) {
+        ghost.style.left = `${ev.clientX - grabDX}px`;
+        ghost.style.top = `${ev.clientY - grabDY}px`;
+        updateTarget(ev.clientX, ev.clientY);
+      }
+
+      function onMove(ev) {
+        if (!dragging) {
+          if (Math.hypot(ev.clientX - startX, ev.clientY - startY) < 8) return;
+          begin(ev);
+          return;
+        }
+        ev.preventDefault();
+        move(ev);
+      }
+
+      function end() {
+        window.removeEventListener('pointermove', onMove);
+        window.removeEventListener('pointerup', end);
+        window.removeEventListener('pointercancel', end);
+        if (!dragging) return; // a plain click - the onclick handler deals with it
+        document.body.classList.remove('dragging-cards');
+        if (ghost) ghost.remove();
+        if (indicator) indicator.remove();
+        el.classList.remove('drag-origin');
+        // The click that browsers fire after a drag must not toggle selection.
+        state.suppressClick = true;
+        setTimeout(() => {
+          state.suppressClick = false;
+        }, 0);
+        const view = state.pendingView || currentState;
+        state.pendingView = null;
+        state.dragging = false;
+        if (insertAt !== null) {
+          if (state.autoSort) state.order = sortedHand(view.hand.myHand).map((c) => c.id);
+          moveCard(card.id, insertAt);
+        }
+        render(view);
+      }
+
+      window.addEventListener('pointermove', onMove, { passive: false });
+      window.addEventListener('pointerup', end);
+      window.addEventListener('pointercancel', end);
+    });
   }
 
   function triggerFaceOffReveal(view) {
@@ -581,6 +1012,195 @@
     if (currentState) renderReveal(currentState);
   }
 
+  // ---------- exact-target celebration (confetti, fireworks, fanfare) ----------
+  let celebrateRaf = null;
+  let celebrateParticles = [];
+  let celebrateStopAt = 0;
+  let celebrateBurstTimer = null;
+  const CONFETTI_COLORS = ['#ffd24a', '#f7f3ea', '#c0392b', '#ffe9a3', '#e8b923', '#ffffff', '#ff7a59'];
+
+  function playFanfare(big) {
+    const ctx = getAudioCtx();
+    if (!ctx) return;
+    if (ctx.state === 'suspended') ctx.resume().catch(() => {});
+    const t0 = ctx.currentTime + 0.05;
+    const tone = (freq, start, dur, type, peak) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = type;
+      osc.frequency.setValueAtTime(freq, start);
+      gain.gain.setValueAtTime(0.0001, start);
+      gain.gain.exponentialRampToValueAtTime(peak, start + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, start + dur);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(start);
+      osc.stop(start + dur + 0.05);
+    };
+    if (big) {
+      // Rising trumpet-ish run, then a held, bright major chord.
+      [523.25, 659.25, 783.99, 1046.5, 1318.5].forEach((f, i) => {
+        tone(f, t0 + i * 0.11, 0.34, 'sawtooth', 0.09);
+        tone(f * 2, t0 + i * 0.11, 0.2, 'triangle', 0.04);
+      });
+      const chordAt = t0 + 0.62;
+      [523.25, 659.25, 783.99, 1046.5, 1568.0].forEach((f) => tone(f, chordAt, 1.6, 'sawtooth', 0.07));
+      [130.81, 196.0].forEach((f) => tone(f, chordAt, 1.6, 'triangle', 0.16));
+      // sparkly shimmer on top
+      for (let i = 0; i < 10; i++) tone(2093 + (i % 4) * 330, chordAt + 0.2 + i * 0.09, 0.25, 'sine', 0.03);
+      // Firework thumps
+      [0.7, 1.35, 2.0, 2.7, 3.4].forEach((d) => playThump(ctx, t0 + d, 90, 0.35, 0.5));
+    } else {
+      // Softer, wistful two-note sting for the player who was just beaten to it.
+      tone(392.0, t0, 0.5, 'triangle', 0.08);
+      tone(329.63, t0 + 0.28, 0.9, 'triangle', 0.08);
+      playThump(ctx, t0 + 0.9, 70, 0.4, 0.4);
+    }
+  }
+
+  function spawnBurst(w, h, count) {
+    const x = w * (0.15 + Math.random() * 0.7);
+    const y = h * (0.12 + Math.random() * 0.4);
+    const hue = CONFETTI_COLORS[Math.floor(Math.random() * CONFETTI_COLORS.length)];
+    for (let i = 0; i < count; i++) {
+      const angle = (Math.PI * 2 * i) / count + Math.random() * 0.2;
+      const speed = 2 + Math.random() * 5;
+      celebrateParticles.push({
+        kind: 'spark', x, y,
+        vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed,
+        life: 1, decay: 0.012 + Math.random() * 0.012, color: hue, size: 2 + Math.random() * 2,
+      });
+    }
+  }
+
+  function spawnConfetti(w, count) {
+    for (let i = 0; i < count; i++) {
+      celebrateParticles.push({
+        kind: 'confetti',
+        x: Math.random() * w, y: -20 - Math.random() * 200,
+        vx: (Math.random() - 0.5) * 3, vy: 2 + Math.random() * 4,
+        rot: Math.random() * Math.PI * 2, vr: (Math.random() - 0.5) * 0.3,
+        w: 6 + Math.random() * 8, h: 10 + Math.random() * 10,
+        color: CONFETTI_COLORS[Math.floor(Math.random() * CONFETTI_COLORS.length)],
+        life: 1, decay: 0.0025,
+      });
+    }
+  }
+
+  function startCelebration(big) {
+    stopCelebration();
+    const canvas = $('confetti-canvas');
+    const ctx2d = canvas.getContext('2d');
+    const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const dpr = window.devicePixelRatio || 1;
+    const resize = () => {
+      canvas.width = window.innerWidth * dpr;
+      canvas.height = window.innerHeight * dpr;
+      ctx2d.setTransform(dpr, 0, 0, dpr, 0, 0);
+    };
+    resize();
+    celebrateParticles = [];
+    celebrateStopAt = performance.now() + (big ? 9000 : 3500);
+    const w = () => window.innerWidth;
+    const h = () => window.innerHeight;
+
+    const volley = () => {
+      spawnConfetti(w(), reduce ? 20 : big ? 90 : 25);
+    };
+    volley();
+    spawnBurst(w(), h(), reduce ? 12 : 36);
+    celebrateBurstTimer = setInterval(() => {
+      if (performance.now() > celebrateStopAt) return;
+      spawnBurst(w(), h(), reduce ? 10 : big ? 40 : 18);
+      if (big) volley();
+    }, big ? 600 : 1200);
+
+    const frame = () => {
+      ctx2d.clearRect(0, 0, w(), h());
+      const live = [];
+      for (const p of celebrateParticles) {
+        if (p.kind === 'confetti') {
+          p.vy += 0.03;
+          p.x += p.vx + Math.sin(p.y / 40) * 0.6;
+          p.y += p.vy;
+          p.rot += p.vr;
+          p.life -= p.decay;
+          ctx2d.save();
+          ctx2d.translate(p.x, p.y);
+          ctx2d.rotate(p.rot);
+          ctx2d.fillStyle = p.color;
+          ctx2d.globalAlpha = Math.max(0, Math.min(1, p.life * 2));
+          ctx2d.fillRect(-p.w / 2, -p.h / 2, p.w, p.h);
+          ctx2d.restore();
+          if (p.y < h() + 40 && p.life > 0) live.push(p);
+        } else {
+          p.vy += 0.05;
+          p.vx *= 0.985;
+          p.x += p.vx;
+          p.y += p.vy;
+          p.life -= p.decay;
+          ctx2d.globalAlpha = Math.max(0, p.life);
+          ctx2d.fillStyle = p.color;
+          ctx2d.beginPath();
+          ctx2d.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+          ctx2d.fill();
+          if (p.life > 0) live.push(p);
+        }
+      }
+      ctx2d.globalAlpha = 1;
+      celebrateParticles = live;
+      if (live.length || performance.now() < celebrateStopAt) celebrateRaf = requestAnimationFrame(frame);
+      else celebrateRaf = null;
+    };
+    celebrateRaf = requestAnimationFrame(frame);
+  }
+
+  function stopCelebration() {
+    if (celebrateRaf) cancelAnimationFrame(celebrateRaf);
+    celebrateRaf = null;
+    clearInterval(celebrateBurstTimer);
+    celebrateBurstTimer = null;
+    celebrateParticles = [];
+    clearTimeout(state.celebrateTimer);
+  }
+
+  // Shown after the hand's winner has been revealed, when someone landed on
+  // the target score exactly. Both players see it; the player who hit it gets
+  // the full fireworks treatment.
+  function showExactCelebration(view) {
+    const iWon = view.matchWinnerId === view.you;
+    const winner = view.players.find((p) => p.id === view.matchWinnerId);
+    const overlay = $('overlay-celebrate');
+    overlay.classList.toggle('opp-won', !iWon);
+    $('celebrate-kicker').textContent = iWon ? 'Perfect score' : 'Dead on target';
+    $('celebrate-number').textContent = String(view.matchTarget);
+    $('celebrate-title').textContent = iWon ? 'EXACTLY! YOU WIN!' : `${winner ? winner.name : 'Opponent'} hit it EXACTLY!`;
+    $('celebrate-sub').textContent = iWon
+      ? `You landed on ${view.matchTarget} on the nose. Absolute precision — the match is yours!`
+      : `${winner ? winner.name : 'Your opponent'} landed on ${view.matchTarget} exactly and takes the match.`;
+    overlay.classList.remove('hidden');
+    const content = $('celebrate-content');
+    content.style.animation = 'none';
+    void content.offsetWidth;
+    content.style.animation = '';
+    playFanfare(iWon);
+    startCelebration(iWon);
+    $('btn-celebrate-continue').onclick = () => {
+      stopCelebration();
+      overlay.classList.add('hidden');
+    };
+  }
+
+  function maybeCelebrate(view) {
+    if (view.phase !== 'match_over' || view.matchEndReason !== 'exact') return;
+    const key = `${view.code}:${view.matchWinnerId}:${JSON.stringify(view.scores)}`;
+    if (state.celebrationKey === key) return;
+    state.celebrationKey = key;
+    // Let the hand's winner land first, then the big moment.
+    clearTimeout(state.celebrateTimer);
+    state.celebrateTimer = setTimeout(() => showExactCelebration(view), 1800);
+  }
+
   function renderReveal(view) {
     const hand = view.hand;
     const result = hand && hand.result;
@@ -591,6 +1211,10 @@
 
     $('overlay-countdown').classList.add('hidden');
     $('overlay-reveal').classList.remove('hidden');
+
+    // The winner is now on screen, so the scoreboard and H2H may finally update.
+    renderScores(view);
+    renderH2hBadge(view);
 
     const isCallerMe = result.callerId === view.you;
     const myTotal = isCallerMe ? result.callerTotal : result.opponentTotal;
@@ -631,13 +1255,13 @@
 
     let reasonText;
     if (result.reason === 'tie_caller_loses') reasonText = 'Tied hands — the caller loses ties.';
-    else if (result.callerWins) reasonText = `${result.callerName} called Face Off with the lower hand.`;
-    else reasonText = `${result.callerName} called Face Off but did not have the lower hand.`;
+    else if (result.callerWins) reasonText = `${escapeHtml(result.callerName)} called Face Off with the lower hand.`;
+    else reasonText = `${escapeHtml(result.callerName)} called Face Off but did not have the lower hand.`;
 
     $('reveal-detail').innerHTML = `
       ${reasonText}<br/>
-      ${me ? me.name : 'You'} ${myDelta > 0 ? `+${myDelta} pts` : 'no penalty'} &middot;
-      ${opp ? opp.name : 'Opponent'} ${oppDelta > 0 ? `+${oppDelta} pts` : 'no penalty'}
+      ${me ? escapeHtml(me.name) : 'You'} ${myDelta > 0 ? `+${myDelta} pts` : 'no penalty'} &middot;
+      ${opp ? escapeHtml(opp.name) : 'Opponent'} ${oppDelta > 0 ? `+${oppDelta} pts` : 'no penalty'}
     `;
 
     const btnNext = $('btn-next-hand');
@@ -646,13 +1270,24 @@
 
     if (view.phase === 'match_over') {
       const matchWon = view.matchWinnerId === view.you;
+      const winnerP = view.players.find((p) => p.id === view.matchWinnerId);
+      const loserP = view.players.find((p) => p.id !== view.matchWinnerId);
       $('reveal-title').textContent = matchWon ? 'You won the match!' : 'You lost the match';
+      let why;
+      if (view.matchEndReason === 'exact') {
+        why = `<span class="big">${winnerP ? escapeHtml(winnerP.name) : 'Winner'} hit ${view.matchTarget} exactly!</span>`;
+      } else if (view.matchEndReason === 'bust') {
+        why = `<span class="big">${loserP ? escapeHtml(loserP.name) : 'A player'} went over ${view.matchTarget}!</span>`;
+      } else {
+        why = `<span class="big">${loserP ? escapeHtml(loserP.name) : 'A player'} reached ${view.matchTarget}.</span>`;
+      }
       matchDetail.classList.remove('hidden');
-      matchDetail.innerHTML = `Final score &mdash; ${me ? me.name : 'You'}: ${view.scores[view.you] || 0} pts,
-        ${opp ? opp.name : 'Opponent'}: ${opp ? view.scores[opp.id] || 0 : 0} pts.`;
+      matchDetail.innerHTML = `${why}Final score &mdash; ${me ? escapeHtml(me.name) : 'You'}: ${view.scores[view.you] || 0} pts,
+        ${opp ? escapeHtml(opp.name) : 'Opponent'}: ${opp ? view.scores[opp.id] || 0 : 0} pts.`;
       btnNext.classList.add('hidden');
       btnNewMatch.classList.remove('hidden');
       btnNewMatch.onclick = () => doAction(() => sendAction('newMatch'));
+      maybeCelebrate(view);
     } else {
       matchDetail.classList.add('hidden');
       btnNewMatch.classList.add('hidden');
@@ -692,6 +1327,7 @@
     state.code = code;
     state.playerId = playerId;
     state.token = token;
+    loadArrangement(code);
     saveSession();
     render(view);
     startPolling();
@@ -734,6 +1370,7 @@
     state.code = saved.code;
     state.playerId = saved.playerId;
     state.token = saved.token;
+    loadArrangement(saved.code);
     try {
       const { state: view } = await fetchState();
       render(view);

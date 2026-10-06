@@ -4,6 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Face Off</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='18' fill='%23111'/%3E%3Ctext x='50' y='70' font-size='64' text-anchor='middle' fill='%23d4af37'%3E%E2%99%A3%3C/text%3E%3C/svg%3E" />
 <link rel="stylesheet" href="style.css" />
 </head>
 <body>
@@ -31,12 +32,41 @@
     </div>
   </section>
 
-  <!-- WAITING -->
+  <!-- LOBBY: waiting for a friend, then game setup (mode + target) -->
   <section id="screen-waiting" class="screen hidden">
-    <h2>Waiting for your friend&hellip;</h2>
-    <p>Share this room code:</p>
-    <div id="room-code-display" class="room-code"></div>
-    <p class="hint">They enter this code on the Face Off home screen to join.</p>
+    <h2 id="lobby-title">Waiting for your friend&hellip;</h2>
+    <div id="lobby-code-block">
+      <p>Share this room code:</p>
+      <div id="room-code-display" class="room-code"></div>
+      <p class="hint">They enter this code on the Face Off home screen to join.</p>
+    </div>
+
+    <div class="panel settings-panel" id="settings-panel">
+      <h3 class="settings-title">Game mode</h3>
+      <div class="mode-cards" id="mode-cards">
+        <button type="button" class="mode-card" data-mode="classic">
+          <span class="mode-name">Classic</span>
+          <span class="mode-desc">First player to reach the target score <b>loses</b>.</span>
+        </button>
+        <button type="button" class="mode-card" data-mode="exact">
+          <span class="mode-name">Exact Target</span>
+          <span class="mode-desc">Land on the target <b>exactly</b> to win. Go over it and you lose.</span>
+        </button>
+      </div>
+
+      <label class="target-label" for="target-input">Target score
+        <input id="target-input" type="number" inputmode="numeric" min="10" max="500" step="5" />
+      </label>
+      <div class="target-presets" id="target-presets"></div>
+
+      <p id="mode-summary" class="mode-summary"></p>
+      <p id="settings-note" class="hint"></p>
+    </div>
+
+    <div id="lobby-h2h" class="h2h-lobby hidden"></div>
+
+    <button id="btn-start-game" class="primary start-btn" disabled>Start Game</button>
+    <p id="start-hint" class="hint"></p>
   </section>
 
   <!-- GAME -->
@@ -48,16 +78,18 @@
         <div class="score-value" id="opp-score">0</div>
         <div class="conn-status" id="opp-conn-status">Disconnected</div>
       </div>
-      <div class="match-target">
-        <span class="mt-label">First to</span>
+      <div class="match-target" id="match-target-box">
+        <span class="mt-label" id="mt-label-1">First to</span>
         <span class="mt-num" id="match-target-val">100</span>
-        <span class="mt-label">loses</span>
+        <span class="mt-label" id="mt-label-2">loses</span>
       </div>
       <div class="score-box" id="my-score-box">
         <div class="score-name" id="my-name">You</div>
         <div class="score-value" id="my-score">0</div>
       </div>
     </header>
+
+    <div class="h2h-badge hidden" id="h2h-badge"></div>
 
     <div class="turn-banner" id="turn-banner">
       <div class="turn-indicator" id="turn-indicator"></div>
@@ -69,15 +101,22 @@
 
     <div class="table-row">
       <div class="pile-block">
+        <div class="pile-label">Draw pile</div>
         <div id="draw-pile" class="card card-back" title="Draw a card"></div>
       </div>
       <div class="pile-block">
+        <div class="pile-label" id="discard-label">Discard pile</div>
         <div id="discard-pile" class="discard-group"></div>
+      </div>
+      <div class="pile-block pending-block hidden" id="pending-block">
+        <div class="pile-label" id="pending-label">Just discarded</div>
+        <div id="pending-discard" class="discard-group"></div>
+        <button id="btn-takeback" type="button" class="takeback hidden">&#8617; Take back</button>
       </div>
     </div>
 
     <div class="hand-header">
-      <span class="hand-header-label">Your hand</span>
+      <span class="hand-header-label">Your hand <span class="drag-hint">&middot; drag cards to arrange</span></span>
       <button id="btn-sort" class="sort-toggle" type="button">Auto-arrange: Off</button>
     </div>
 
@@ -105,6 +144,18 @@
     <div class="countdown-heart">&hearts;</div>
     <div class="countdown-num" id="countdown-num">3</div>
     <div class="countdown-label">Face&nbsp;Off!</div>
+  </div>
+
+  <!-- EXACT-TARGET CELEBRATION -->
+  <div id="overlay-celebrate" class="overlay overlay-celebrate hidden">
+    <canvas id="confetti-canvas"></canvas>
+    <div class="celebrate-content" id="celebrate-content">
+      <div class="celebrate-kicker" id="celebrate-kicker">PERFECT SCORE</div>
+      <div class="celebrate-number" id="celebrate-number">50</div>
+      <div class="celebrate-title" id="celebrate-title">EXACTLY!</div>
+      <div class="celebrate-sub" id="celebrate-sub"></div>
+      <button id="btn-celebrate-continue" class="primary">Continue</button>
+    </div>
   </div>
 
   <!-- DRAMATIC REVEAL OVERLAY (hand over or match over) -->
