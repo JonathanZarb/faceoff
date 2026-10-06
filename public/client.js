@@ -711,22 +711,14 @@
       discardEl.appendChild(el);
     });
 
-    // This turn's discard, shown to BOTH players the instant it's played. The
-    // discarder can still take it back until they draw.
-    const pendingBlock = $('pending-block');
-    const pendingEl = $('pending-discard');
-    pendingEl.innerHTML = '';
-    const pending = hand.pendingDiscard || [];
-    if (view.phase === 'playing' && pending.length > 0) {
-      pendingBlock.classList.remove('hidden');
-      pending.forEach((card) => pendingEl.appendChild(cardFaceEl(card, { clickable: false })));
-      const tb = $('btn-takeback');
-      tb.classList.toggle('hidden', !hand.canTakeBack);
-      tb.onclick = hand.canTakeBack ? () => doAction(() => sendAction('takeBack')) : null;
-    } else {
-      pendingBlock.classList.add('hidden');
-      $('btn-takeback').classList.add('hidden');
-    }
+    // Take back: only the discarder ever sees anything about a pending
+    // discard, and even they just get this button - no cards are shown to
+    // anyone until the discarder draws and the discard becomes public.
+    const tb = $('btn-takeback');
+    const canTakeBack = view.phase === 'playing' && !!hand.canTakeBack;
+    tb.classList.toggle('invisible', !canTakeBack);
+    tb.tabIndex = canTakeBack ? 0 : -1;
+    tb.onclick = canTakeBack ? () => doAction(() => sendAction('takeBack')) : null;
 
     // my hand
     const canDiscard = view.phase === 'playing' && hand.isMyTurn && hand.turnPhase === 'await_discard';
@@ -738,7 +730,7 @@
 
     // Cards just discarded keep their slot in my custom order, so a take-back
     // drops them back exactly where they were.
-    const heldIds = new Set(hand.isMyTurn ? (hand.pendingDiscard || []).map((c) => c.id) : []);
+    const heldIds = new Set((hand.pendingDiscard || []).map((c) => c.id));
     const arranged = arrangedHand(hand.myHand, heldIds);
     const displayHand = state.autoSort ? sortedHand(hand.myHand) : arranged;
     displayHand.forEach((card) => {
@@ -771,10 +763,9 @@
     $('btn-sort').classList.toggle('active', state.autoSort);
     $('btn-sort').setAttribute('aria-pressed', state.autoSort ? 'true' : 'false');
     $('btn-sort').onclick = () => {
-      if (state.autoSort) {
-        // Turning it off keeps the cards exactly where they are on screen.
-        state.order = sortedHand(currentState.hand.myHand).map((c) => c.id);
-      }
+      // Auto-arrange only changes what's displayed - state.order (the dealt /
+      // hand-arranged order) is untouched, so turning it off goes straight
+      // back to the cards as they were before.
       state.autoSort = !state.autoSort;
       saveArrangement();
       render(currentState);

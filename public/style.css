@@ -658,28 +658,30 @@ body.dragging-cards { cursor: grabbing; user-select: none; -webkit-user-select: 
 }
 
 
-/* ---------- PILE LABELS + TAKE BACK ---------- */
-.pending-block {
-  padding: 8px 12px 10px;
-  border-radius: 12px;
-  border: 1px dashed rgba(212,175,55,0.6);
-  background: rgba(212,175,55,0.08);
-  animation: pending-in 0.25s ease;
-}
-.pending-block .pending-block .card { opacity: 1; }
-@keyframes pending-in {
-  0% { transform: translateY(-8px) scale(0.96); opacity: 0; }
-  100% { transform: none; opacity: 1; }
-}
+/* ---------- TAKE BACK ---------- */
+.hand-header { justify-content: space-between; min-height: 30px; }
 .takeback {
-  margin-top: 8px;
-  background: rgba(255,255,255,0.16);
-  color: var(--cream);
-  border: 1px solid var(--gold);
-  padding: 7px 14px;
-  font-size: 0.82rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: rgba(212,175,55,0.14);
+  color: var(--gold);
+  border: 1px solid rgba(212,175,55,0.65);
+  border-radius: 14px;
+  padding: 3px 11px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  line-height: 1.4;
+  animation: takeback-in 0.2s ease;
 }
-.takeback:hover:not(:disabled) { background: rgba(212,175,55,0.3); }
+.takeback svg { display: block; }
+.takeback:hover:not(:disabled) { background: rgba(212,175,55,0.28); color: #fff3cf; }
+.takeback.invisible { visibility: hidden; pointer-events: none; animation: none; }
+@keyframes takeback-in {
+  0% { opacity: 0; transform: translateY(4px); }
+  100% { opacity: 1; transform: none; }
+}
 
 /* ---------- H2H ---------- */
 .score-h2h {
